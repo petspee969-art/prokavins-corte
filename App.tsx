@@ -68,6 +68,22 @@ const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   return response.json();
 };
 
+// Helper function to map OrderStatus to specific icons for the production stage bar
+const getStageIcon = (status: OrderStatus) => {
+  switch (status) {
+    case OrderStatus.PLANNED:
+      return ClipboardList;
+    case OrderStatus.CUTTING:
+      return Scissors;
+    case OrderStatus.SEWING:
+      return Shirt;
+    case OrderStatus.FINISHED:
+      return CheckCircle2;
+    default:
+      return PackageCheck;
+  }
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'production' | 'seamstresses' | 'products' | 'reports' | 'fabrics'>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
@@ -97,7 +113,6 @@ export default function App() {
   const [loadingAi, setLoadingAi] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Estados dos filtros de relatório
   const [reportFilters, setReportFilters] = useState({
     startDate: '',
     endDate: '',
@@ -143,7 +158,6 @@ export default function App() {
   }, [orders]);
 
   const dashboardMetrics = useMemo(() => {
-    const totalOrders = orders.length;
     const plannedOrdersCount = orders.filter(o => o.status === OrderStatus.PLANNED).length;
     const cuttingOrders = orders.filter(o => o.status === OrderStatus.CUTTING).length;
     
@@ -175,7 +189,6 @@ export default function App() {
         const d = new Date();
         d.setDate(d.getDate() - i);
         const dayKey = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        
         let value = 0;
         orders.forEach(o => {
             (Array.isArray(o.splits) ? o.splits : []).forEach(s => {
@@ -195,15 +208,12 @@ export default function App() {
         const d = new Date();
         d.setMonth(d.getMonth() - i);
         const monthKey = d.toLocaleDateString('pt-BR', { month: 'short' });
-        const mIdx = d.getMonth();
-        const yIdx = d.getFullYear();
-
         let value = 0;
         orders.forEach(o => {
             (Array.isArray(o.splits) ? o.splits : []).forEach(s => {
                 if (s.status === OrderStatus.FINISHED && s.finishedAt) {
                     const fDate = new Date(s.finishedAt);
-                    if (fDate.getMonth() === mIdx && fDate.getFullYear() === yIdx) {
+                    if (fDate.getMonth() === d.getMonth() && fDate.getFullYear() === d.getFullYear()) {
                         value += Array.isArray(s.items) ? s.items.reduce((acc, item) => acc + (item.actualPieces || 0), 0) : 0;
                     }
                 }
@@ -212,14 +222,7 @@ export default function App() {
         monthlyData.push({ name: monthKey, peças: value });
     }
 
-    return {
-        plannedOrdersCount,
-        activeSeamstressesCount,
-        monthPiecesProduced,
-        cuttingOrders,
-        weeklyData,
-        monthlyData
-    };
+    return { plannedOrdersCount, activeSeamstressesCount, monthPiecesProduced, cuttingOrders, weeklyData, monthlyData };
   }, [orders]);
 
   const stageCounts = useMemo(() => {
@@ -235,7 +238,6 @@ export default function App() {
     try {
         const existingIndex = orders.findIndex(o => o.id === newOrderData.id);
         const timestamp = new Date().toISOString();
-
         if (existingIndex > -1) {
             await apiFetch(`orders/${newOrderData.id}`, {
                 method: 'PATCH',
@@ -280,16 +282,10 @@ export default function App() {
   const handleSaveProduct = async (product: Omit<ProductReference, 'id'> | ProductReference) => {
     try {
         if ('id' in product) {
-            await apiFetch(`products/${product.id}`, {
-                method: 'PUT',
-                body: JSON.stringify(product)
-            });
+            await apiFetch(`products/${product.id}`, { method: 'PUT', body: JSON.stringify(product) });
             setReferences(prev => prev.map(r => r.id === product.id ? product as ProductReference : r));
         } else {
-            const savedProduct = await apiFetch('products', {
-                method: 'POST',
-                body: JSON.stringify(product)
-            });
+            const savedProduct = await apiFetch('products', { method: 'POST', body: JSON.stringify(product) });
             setReferences(prev => [...prev, savedProduct]);
         }
     } catch (error: any) {
@@ -301,16 +297,10 @@ export default function App() {
   const handleSaveSeamstress = async (seamstress: Omit<Seamstress, 'id'> | Seamstress) => {
       try {
           if ('id' in seamstress) {
-              await apiFetch(`seamstresses/${seamstress.id}`, {
-                  method: 'PUT',
-                  body: JSON.stringify(seamstress)
-              });
+              await apiFetch(`seamstresses/${seamstress.id}`, { method: 'PUT', body: JSON.stringify(seamstress) });
               setSeamstresses(prev => prev.map(s => s.id === seamstress.id ? seamstress as Seamstress : s));
           } else {
-              const saved = await apiFetch('seamstresses', {
-                  method: 'POST',
-                  body: JSON.stringify(seamstress)
-              });
+              const saved = await apiFetch('seamstresses', { method: 'POST', body: JSON.stringify(seamstress) });
               setSeamstresses(prev => [...prev, saved]);
           }
       } catch (error) {
@@ -322,16 +312,10 @@ export default function App() {
     try {
         const timestamp = new Date().toISOString();
         if ('id' in fabric) {
-            const updated = await apiFetch(`fabrics/${fabric.id}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ ...fabric, updatedAt: timestamp })
-            });
+            const updated = await apiFetch(`fabrics/${fabric.id}`, { method: 'PATCH', body: JSON.stringify({ ...fabric, updatedAt: timestamp }) });
             setFabrics(prev => prev.map(f => f.id === fabric.id ? updated : f));
         } else {
-            const saved = await apiFetch('fabrics', {
-                method: 'POST',
-                body: JSON.stringify({ ...fabric, createdAt: timestamp, updatedAt: timestamp })
-            });
+            const saved = await apiFetch('fabrics', { method: 'POST', body: JSON.stringify({ ...fabric, createdAt: timestamp, updatedAt: timestamp }) });
             setFabrics(prev => [...prev, saved]);
         }
     } catch (error: any) {
@@ -343,18 +327,12 @@ export default function App() {
   const handleQuickStockAdd = async (fabric: Fabric) => {
       const input = window.prompt(`Adicionar estoque para ${fabric.name} - ${fabric.color}.\n\nQuantos rolos entraram?`, '0');
       if (input === null) return;
-      
       const amountToAdd = parseFloat(input.replace(',', '.'));
       if (isNaN(amountToAdd) || amountToAdd <= 0) return;
-
       const newStock = parseFloat((fabric.stockRolls + amountToAdd).toFixed(2));
       const updatedAt = new Date().toISOString();
-
       try {
-          await apiFetch(`fabrics/${fabric.id}`, {
-              method: 'PATCH',
-              body: JSON.stringify({ stockRolls: newStock, updatedAt })
-          });
+          await apiFetch(`fabrics/${fabric.id}`, { method: 'PATCH', body: JSON.stringify({ stockRolls: newStock, updatedAt }) });
           setFabrics(prev => prev.map(f => f.id === fabric.id ? { ...f, stockRolls: newStock, updatedAt } : f));
       } catch (error) {
           console.error("Error adding stock:", error);
@@ -364,9 +342,6 @@ export default function App() {
   const initiateMoveToCutting = async (order: ProductionOrder) => {
     const updatedAt = new Date().toISOString();
     try {
-        const updatedFabricList = [...fabrics];
-        
-        // --- VALIDAÇÃO DE ESTOQUE ---
         const missingStock: string[] = [];
         for (const item of (Array.isArray(order.items) ? order.items : [])) {
              const fabricRec = fabrics.find(f => f.name.toLowerCase() === order.fabric.toLowerCase() && f.color.toLowerCase() === item.color.toLowerCase());
@@ -375,34 +350,22 @@ export default function App() {
                  missingStock.push(`${item.color}: Disponível ${fabricRec?.stockRolls || 0}, Necessário ${used}`);
              }
         }
-
         if (missingStock.length > 0) {
             alert(`Estoque insuficiente de tecido (${order.fabric}) para iniciar o corte:\n\n${missingStock.join('\n')}\n\nPor favor, regularize o estoque antes de prosseguir.`);
             return;
         }
-
-        // --- ATUALIZAÇÃO DE ESTOQUE E STATUS ---
+        const updatedFabricList = [...fabrics];
         for (const item of (Array.isArray(order.items) ? order.items : [])) {
              const fabricRecIdx = updatedFabricList.findIndex(f => f.name.toLowerCase() === order.fabric.toLowerCase() && f.color.toLowerCase() === item.color.toLowerCase());
              if (fabricRecIdx > -1) {
                  const fabricRec = updatedFabricList[fabricRecIdx];
                  const used = Number(item.rollsUsed) || 0;
                  const newStock = Math.max(0, fabricRec.stockRolls - used);
-                 
-                 await apiFetch(`fabrics/${fabricRec.id}`, {
-                     method: 'PATCH',
-                     body: JSON.stringify({ stockRolls: newStock, updatedAt })
-                 });
-                 
+                 await apiFetch(`fabrics/${fabricRec.id}`, { method: 'PATCH', body: JSON.stringify({ stockRolls: newStock, updatedAt }) });
                  updatedFabricList[fabricRecIdx] = { ...fabricRec, stockRolls: newStock, updatedAt };
              }
         }
-        
-        const updatedOrder = await apiFetch(`orders/${order.id}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ status: OrderStatus.CUTTING, updatedAt })
-        });
-
+        const updatedOrder = await apiFetch(`orders/${order.id}`, { method: 'PATCH', body: JSON.stringify({ status: OrderStatus.CUTTING, updatedAt }) });
         setFabrics(updatedFabricList);
         setOrders(orders.map(o => o.id === order.id ? updatedOrder : o));
         setProductionStage(OrderStatus.CUTTING);
@@ -412,24 +375,13 @@ export default function App() {
     }
   };
   
-  const initiateConfirmCut = (order: ProductionOrder) => {
-    setCuttingOrder(order);
-  }
+  const initiateConfirmCut = (order: ProductionOrder) => setCuttingOrder(order);
 
   const confirmCut = async (updatedTotalItems: ProductionOrderItem[], activeItems: ProductionOrderItem[]) => {
     if (!cuttingOrder) return;
     const updatedAt = new Date().toISOString();
-    
     try {
-        const updated = await apiFetch(`orders/${cuttingOrder.id}`, {
-            method: 'PATCH',
-            body: JSON.stringify({
-                items: updatedTotalItems,
-                activeCuttingItems: activeItems,
-                updatedAt
-            })
-        });
-
+        const updated = await apiFetch(`orders/${cuttingOrder.id}`, { method: 'PATCH', body: JSON.stringify({ items: updatedTotalItems, activeCuttingItems: activeItems, updatedAt }) });
         setOrders(orders.map(o => o.id === cuttingOrder.id ? updated : o));
         setCuttingOrder(null);
     } catch (error) {
@@ -437,83 +389,41 @@ export default function App() {
     }
   };
 
-  const initiateDistribute = (order: ProductionOrder) => {
-    setDistributingOrder(order);
-  };
+  const initiateDistribute = (order: ProductionOrder) => setDistributingOrder(order);
 
   const handleDistribute = async (originalOrderId: string, distributionMap: {color: string, sizes: SizeDistribution}[], seamstressId: string) => {
     const originalOrder = orders.find(o => o.id === originalOrderId);
     if (!originalOrder) return;
     const seamstress = seamstresses.find(s => s.id === seamstressId);
     if (!seamstress) return;
-
     const splitItems: ProductionOrderItem[] = [];
     const updatedActiveItems = Array.isArray(originalOrder.activeCuttingItems) ? [...originalOrder.activeCuttingItems] : [];
-
     distributionMap.forEach(dist => {
         const totalToSend = Object.values(dist.sizes).reduce((acc: number, curr) => acc + (Number(curr) || 0), 0);
         const originalItemRef = (Array.isArray(originalOrder.items) ? originalOrder.items : []).find(i => i.color === dist.color);
-
-        splitItems.push({
-            color: dist.color,
-            colorHex: originalItemRef?.colorHex,
-            rollsUsed: 0,
-            piecesPerSizeEst: 0,
-            estimatedPieces: totalToSend,
-            actualPieces: totalToSend,
-            sizes: dist.sizes
-        });
-
+        splitItems.push({ color: dist.color, colorHex: originalItemRef?.colorHex, rollsUsed: 0, piecesPerSizeEst: 0, estimatedPieces: totalToSend, actualPieces: totalToSend, sizes: dist.sizes });
         const itemIndex = updatedActiveItems.findIndex(i => i.color === dist.color);
         if (itemIndex > -1) {
             const activeItem = updatedActiveItems[itemIndex];
             const remainingSizes = { ...activeItem.sizes };
             let remainingTotal = 0;
-
             Object.keys(remainingSizes).forEach(key => {
                 const current = remainingSizes[key] || 0;
                 const sent = dist.sizes[key] || 0;
                 remainingSizes[key] = Math.max(0, current - sent);
                 remainingTotal += remainingSizes[key]!;
             });
-
-            updatedActiveItems[itemIndex] = {
-                ...activeItem,
-                sizes: remainingSizes,
-                actualPieces: remainingTotal
-            };
+            updatedActiveItems[itemIndex] = { ...activeItem, sizes: remainingSizes, actualPieces: remainingTotal };
         }
     });
-    
     const newId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `split-${Date.now()}`;
-
-    const newSplit: OrderSplit = {
-        id: newId,
-        seamstressId: seamstress.id,
-        seamstressName: seamstress.name,
-        status: OrderStatus.SEWING,
-        items: splitItems,
-        createdAt: new Date().toISOString()
-    };
-
+    const newSplit: OrderSplit = { id: newId, seamstressId: seamstress.id, seamstressName: seamstress.name, status: OrderStatus.SEWING, items: splitItems, createdAt: new Date().toISOString() };
     const newSplits = [...(Array.isArray(originalOrder.splits) ? originalOrder.splits : []), newSplit];
     const updatedAt = new Date().toISOString();
-
     try {
-        const updated = await apiFetch(`orders/${originalOrderId}`, {
-            method: 'PATCH',
-            body: JSON.stringify({
-                activeCuttingItems: updatedActiveItems,
-                splits: newSplits,
-                status: OrderStatus.SEWING,
-                updatedAt
-            })
-        });
-
+        const updated = await apiFetch(`orders/${originalOrderId}`, { method: 'PATCH', body: JSON.stringify({ activeCuttingItems: updatedActiveItems, splits: newSplits, status: OrderStatus.SEWING, updatedAt }) });
         setOrders(prev => prev.map(o => o.id === originalOrderId ? updated : o));
-        if (originalOrder.status === OrderStatus.CUTTING) {
-            setProductionStage(OrderStatus.SEWING);
-        }
+        if (originalOrder.status === OrderStatus.CUTTING) setProductionStage(OrderStatus.SEWING);
     } catch (error) {
         console.error("Error distributing:", error);
     }
@@ -522,33 +432,16 @@ export default function App() {
   const handleMarkSplitFinished = async (orderId: string, splitIndex: number) => {
       const order = orders.find(o => o.id === orderId);
       if(!order || !Array.isArray(order.splits)) return;
-
       const updatedSplits = [...order.splits];
       if (!updatedSplits[splitIndex]) return;
-
-      updatedSplits[splitIndex] = {
-          ...updatedSplits[splitIndex],
-          status: OrderStatus.FINISHED,
-          finishedAt: new Date().toISOString()
-      };
-
+      updatedSplits[splitIndex] = { ...updatedSplits[splitIndex], status: OrderStatus.FINISHED, finishedAt: new Date().toISOString() };
       const cuttingEmpty = (Array.isArray(order.activeCuttingItems) ? order.activeCuttingItems : []).every(i => i.actualPieces === 0);
       const allSplitsFinished = updatedSplits.every(s => s.status === OrderStatus.FINISHED);
-      
       const isNowFinished = (cuttingEmpty && allSplitsFinished);
       const newStatus = isNowFinished ? OrderStatus.FINISHED : OrderStatus.SEWING;
       const updatedAt = new Date().toISOString();
-
       try {
-          const updated = await apiFetch(`orders/${orderId}`, {
-            method: 'PATCH',
-            body: JSON.stringify({
-                splits: updatedSplits,
-                status: newStatus,
-                updatedAt,
-                finishedAt: isNowFinished ? updatedAt : order.finishedAt
-            })
-          });
+          const updated = await apiFetch(`orders/${orderId}`, { method: 'PATCH', body: JSON.stringify({ splits: updatedSplits, status: newStatus, updatedAt, finishedAt: isNowFinished ? updatedAt : order.finishedAt }) });
           setOrders(prev => prev.map(o => o.id === orderId ? updated : o));
       } catch (error) {
           console.error("Error finishing split:", error);
@@ -565,510 +458,116 @@ export default function App() {
   const handlePrintPlannedOrders = () => {
     const plannedOrders = orders.filter(o => o.status === OrderStatus.PLANNED);
     if (plannedOrders.length === 0) return alert("Não há pedidos planejados para imprimir.");
-
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
-
     let content = `
       <html>
         <head>
-          <title>Pedidos Planejados - Kavin's</title>
+          <title>Relatório Planejado - Kavin's</title>
           <style>
-            body { font-family: 'Inter', sans-serif; font-size: 10pt; color: #333; margin: 20px; }
-            h1 { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 16pt; }
-            .order-block { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; page-break-inside: avoid; }
-            .order-header { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px; }
-            .ref { font-weight: bold; font-size: 11pt; color: #1e1b4b; }
-            .fabric-info { margin-bottom: 5px; font-style: italic; color: #555; }
-            .items-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
-            .items-table th { text-align: left; font-size: 9pt; color: #777; border-bottom: 1px solid #eee; padding: 2px; }
-            .items-table td { padding: 4px 2px; border-bottom: 1px dotted #eee; }
-            .blank-space { width: 120px; border-bottom: 1px solid #333; display: inline-block; height: 12px; margin-left: 10px; }
-            .total-info { font-size: 8pt; color: #999; text-align: right; margin-top: 4px; }
+            body { font-family: 'Inter', sans-serif; font-size: 8pt; color: #000; margin: 10px; line-height: 1.2; }
+            h1 { text-align: center; border-bottom: 1px solid #000; padding-bottom: 5px; font-size: 12pt; margin-bottom: 10px; }
+            .order-block { border: 1px solid #000; padding: 6px; margin-bottom: 8px; page-break-inside: avoid; }
+            .order-header { font-weight: bold; font-size: 10pt; border-bottom: 1px solid #ccc; margin-bottom: 5px; display: flex; justify-content: space-between; }
+            .order-info { font-size: 9pt; margin-bottom: 4px; }
+            .items-list { margin-top: 4px; }
+            .item-line { margin-bottom: 2px; border-bottom: none; display: flex; align-items: center; }
+            .spacer { flex: 1; min-width: 150px; }
+            .total-info { font-size: 7pt; text-align: right; margin-top: 5px; font-weight: bold; }
           </style>
         </head>
         <body>
-          <h1>Relatório de Pedidos Planejados - Kavin's</h1>
+          <h1>Controle de Produção Planejada - Kavin's</h1>
     `;
-
     plannedOrders.forEach(o => {
       const fabricObj = fabrics.find(f => f.name.toLowerCase() === o.fabric.toLowerCase());
       const fabricNotes = fabricObj?.notes ? `(${fabricObj.notes})` : '';
-
       content += `
         <div class="order-block">
           <div class="order-header">
-            <span class="ref">Ref: ${o.referenceCode} - ${o.description}</span>
-            <span>ID: #${o.id} | Data: ${new Date(o.createdAt).toLocaleDateString()}</span>
+            <span>Ref: ${o.referenceCode} - ${o.description}</span>
+            <span>#${o.id}</span>
           </div>
-          <div class="fabric-info">
+          <div class="order-info">
             <strong>Tecido:</strong> ${o.fabric} ${fabricNotes}
           </div>
-          <table class="items-table">
-            <thead>
-              <tr>
-                <th>Cor</th>
-                <th>Rolos</th>
-                <th>Conferência / Espaço em Branco</th>
-              </tr>
-            </thead>
-            <tbody>
+          <div class="items-list">
       `;
-
       o.items.forEach(item => {
-        content += `
-          <tr>
-            <td style="width: 30%">${item.color}</td>
-            <td style="width: 15%">${item.rollsUsed} rolos</td>
-            <td><div class="blank-space"></div></td>
-          </tr>
-        `;
+        content += `<div class="item-line">Cor: <strong>${item.color}</strong> - <strong>${item.rollsUsed} rolos</strong> <div class="spacer"></div></div>`;
       });
-
       content += `
-            </tbody>
-          </table>
+          </div>
           <div class="total-info">
-            Total estimado: ${o.items.reduce((acc, i) => acc + i.estimatedPieces, 0)} peças
+            Peças Estimadas: ${o.items.reduce((acc, i) => acc + i.estimatedPieces, 0)}
           </div>
         </div>
       `;
     });
-
-    content += `
-        </body>
-      </html>
-    `;
-
+    content += `</body></html>`;
     printWindow.document.write(content);
     printWindow.document.close();
     printWindow.print();
   };
 
-  const filteredFabrics = useMemo(() => {
-    return fabrics.filter(f => {
-        const matchesName = f.name.toLowerCase().includes(fabricFilters.name.toLowerCase());
-        const matchesColor = f.color.toLowerCase().includes(fabricFilters.color.toLowerCase());
-        return matchesName && matchesColor;
-    });
-  }, [fabrics, fabricFilters]);
-
-  const filteredOrders = orders.filter(o => 
-    (o.referenceCode.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    o.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    o.id.includes(searchTerm)) &&
-    o.status === productionStage
-  );
-
-  // Filtros avançados para a aba de Relatórios
-  const reportFilteredOrders = useMemo(() => {
-    return orders.filter(o => {
+  const filteredFabrics = useMemo(() => fabrics.filter(f => f.name.toLowerCase().includes(fabricFilters.name.toLowerCase()) && f.color.toLowerCase().includes(fabricFilters.color.toLowerCase())), [fabrics, fabricFilters]);
+  
+  const filteredOrders = orders.filter(o => (o.referenceCode.toLowerCase().includes(searchTerm.toLowerCase()) || o.description.toLowerCase().includes(searchTerm.toLowerCase()) || o.id.includes(searchTerm)) && o.status === productionStage);
+  
+  const reportFilteredOrders = useMemo(() => orders.filter(o => {
       const orderDate = new Date(o.createdAt).toISOString().split('T')[0];
       const startMatch = reportFilters.startDate ? orderDate >= reportFilters.startDate : true;
       const endMatch = reportFilters.endDate ? orderDate <= reportFilters.endDate : true;
-      const fabricMatch = reportFilters.fabric ? o.fabric.toLowerCase().includes(reportFilters.fabric.toLowerCase()) : true;
-      
-      // Filtro por costureira (verifica nos splits)
-      const seamstressMatch = reportFilters.seamstress 
-        ? (o.splits || []).some(s => s.seamstressName.toLowerCase().includes(reportFilters.seamstress.toLowerCase()))
-        : true;
-
+      const fabricMatch = reportFilters.fabric ? o.fabric.toLowerCase() === reportFilters.fabric.toLowerCase() : true;
+      const seamstressMatch = reportFilters.seamstress ? (o.splits || []).some(s => s.seamstressName.toLowerCase() === reportFilters.seamstress.toLowerCase()) : true;
       return startMatch && endMatch && fabricMatch && seamstressMatch;
-    });
-  }, [orders, reportFilters]);
+  }), [orders, reportFilters]);
 
-  const getStageIcon = (stage: OrderStatus) => {
-      switch(stage) {
-          case OrderStatus.PLANNED: return ClipboardList;
-          case OrderStatus.CUTTING: return Scissors;
-          case OrderStatus.SEWING: return Shirt;
-          case OrderStatus.FINISHED: return CheckCircle2;
-          default: return ClipboardList;
-      }
-  }
+  const uniqueFabricNames = useMemo(() => Array.from(new Set(fabrics.map(f => f.name))).sort(), [fabrics]);
+  const uniqueSeamstressNames = useMemo(() => Array.from(new Set(seamstresses.map(s => s.name))).sort(), [seamstresses]);
 
-  if (isLoading) {
-      return (
-          <div className="flex h-screen items-center justify-center bg-slate-50">
-              <div className="text-center">
-                  <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" />
-                  <h2 className="text-xl font-bold text-slate-700">Conectando ao banco de dados...</h2>
-              </div>
-          </div>
-      )
-  }
+  if (isLoading) return (<div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" /><h2 className="text-xl font-bold text-slate-700">Conectando ao banco de dados...</h2></div></div>);
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden">
       <aside className="w-64 bg-indigo-950 text-white flex-shrink-0 flex flex-col shadow-xl z-20">
-        <div className="p-8">
-          <h1 className="text-3xl font-bold tracking-tighter bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Kavin's</h1>
-          <p className="text-xs text-indigo-300 mt-1 uppercase tracking-widest">Confecção & Gestão</p>
-        </div>
+        <div className="p-8"><h1 className="text-3xl font-bold tracking-tighter bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Kavin's</h1><p className="text-xs text-indigo-300 mt-1 uppercase tracking-widest">Confecção & Gestão</p></div>
         <nav className="flex-1 px-4 space-y-2">
-          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}>
-            <LayoutDashboard size={20} /> <span className="font-medium">Dashboard</span>
-          </button>
-          <button onClick={() => setActiveTab('production')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'production' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}>
-            <Scissors size={20} /> <span className="font-medium">Produção</span>
-          </button>
-          <button onClick={() => setActiveTab('fabrics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'fabrics' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}>
-            <Layers size={20} /> <span className="font-medium">Estoque de Tecidos</span>
-          </button>
-          <button onClick={() => setActiveTab('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'reports' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}>
-            <FileText size={20} /> <span className="font-medium">Relatórios</span>
-          </button>
-          <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'products' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}>
-            <Tags size={20} /> <span className="font-medium">Cadastros</span>
-          </button>
-          <button onClick={() => setActiveTab('seamstresses')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'seamstresses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}>
-            <Users size={20} /> <span className="font-medium">Costureiras</span>
-          </button>
+          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}><LayoutDashboard size={20} /> <span className="font-medium">Dashboard</span></button>
+          <button onClick={() => setActiveTab('production')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'production' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}><Scissors size={20} /> <span className="font-medium">Produção</span></button>
+          <button onClick={() => setActiveTab('fabrics')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'fabrics' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}><Layers size={20} /> <span className="font-medium">Estoque de Tecidos</span></button>
+          <button onClick={() => setActiveTab('reports')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'reports' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}><FileText size={20} /> <span className="font-medium">Relatórios</span></button>
+          <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'products' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}><Tags size={20} /> <span className="font-medium">Cadastros</span></button>
+          <button onClick={() => setActiveTab('seamstresses')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'seamstresses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10'}`}><Users size={20} /> <span className="font-medium">Costureiras</span></button>
         </nav>
       </aside>
 
       <main className="flex-1 overflow-y-auto relative">
         <header className="sticky top-0 bg-white/80 backdrop-blur-md z-10 border-b border-slate-200 px-8 py-4 flex justify-between items-center">
           <h2 className="text-2xl font-bold text-slate-800">
-            {activeTab === 'dashboard' && 'Visão Geral'}
-            {activeTab === 'production' && 'Gerenciamento de Produção'}
-            {activeTab === 'reports' && 'Relatórios e Análises'}
-            {activeTab === 'products' && 'Catálogo de Produtos'}
-            {activeTab === 'seamstresses' && 'Equipe de Costura'}
-            {activeTab === 'fabrics' && 'Controle de Estoque de Tecidos'}
+            {activeTab === 'dashboard' && 'Visão Geral'}{activeTab === 'production' && 'Gerenciamento de Produção'}{activeTab === 'reports' && 'Relatórios e Análises'}{activeTab === 'products' && 'Catálogo de Produtos'}{activeTab === 'seamstresses' && 'Equipe de Costura'}{activeTab === 'fabrics' && 'Controle de Estoque de Tecidos'}
           </h2>
           <div className="flex items-center gap-4">
-            {activeTab === 'production' && (
-              <>
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                    <input type="text" placeholder="Buscar ordem..." className="pl-10 pr-4 py-2 rounded-full border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none w-64 transition-all" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                </div>
-                {productionStage === OrderStatus.PLANNED && (
-                  <button onClick={handlePrintPlannedOrders} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-full font-medium flex items-center gap-2 transition-all active:scale-95 border border-slate-300">
-                    <Printer size={18} /> Imprimir PDF
-                  </button>
-                )}
-                <button onClick={() => { setOrderToEdit(null); setIsOrderModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Ordem</button>
-              </>
-            )}
-             {activeTab === 'reports' && (
-              <button onClick={handleGenerateAiReport} disabled={loadingAi} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg hover:opacity-90 transition-all disabled:opacity-50">
-                {loadingAi ? <Loader2 size={18} className="animate-spin" /> : <TrendingUp size={18} />} Analisar com IA
-              </button>
-            )}
-            {activeTab === 'products' && (
-              <button onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Novo Produto</button>
-            )}
-             {activeTab === 'fabrics' && (
-              <button onClick={() => { setFabricToEdit(null); setIsFabricModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Entrada de Tecido</button>
-            )}
-             {activeTab === 'seamstresses' && (
-              <button onClick={() => { setSeamstressToEdit(null); setIsSeamstressModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Costureira</button>
-            )}
+            {activeTab === 'production' && (<><div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} /><input type="text" placeholder="Buscar ordem..." className="pl-10 pr-4 py-2 rounded-full border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none w-64 transition-all" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></div>{productionStage === OrderStatus.PLANNED && (<button onClick={handlePrintPlannedOrders} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-full font-medium flex items-center gap-2 transition-all active:scale-95 border border-slate-300"><Printer size={18} /> Imprimir PDF</button>)}<button onClick={() => { setOrderToEdit(null); setIsOrderModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Ordem</button></>)}
+             {activeTab === 'reports' && (<button onClick={handleGenerateAiReport} disabled={loadingAi} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg hover:opacity-90 transition-all disabled:opacity-50">{loadingAi ? <Loader2 size={18} className="animate-spin" /> : <TrendingUp size={18} />} Analisar com IA</button>)}
+            {activeTab === 'products' && (<button onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Novo Produto</button>)}
+             {activeTab === 'fabrics' && (<button onClick={() => { setFabricToEdit(null); setIsFabricModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Entrada de Tecido</button>)}
+             {activeTab === 'seamstresses' && (<button onClick={() => { setSeamstressToEdit(null); setIsSeamstressModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Costureira</button>)}
           </div>
         </header>
 
         <div className="p-8 max-w-7xl mx-auto space-y-8">
-          {activeTab === 'dashboard' && (
-            <div className="space-y-8 animate-in fade-in duration-500">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <StatCard title="Pedidos Planejados" value={dashboardMetrics.plannedOrdersCount} icon={ClipboardList} color="bg-blue-500" trend="Aguardando Corte" />
-                <StatCard title="Costureiras Ativas" value={dashboardMetrics.activeSeamstressesCount} icon={Users} color="bg-pink-500" trend="Costurando agora" />
-                <StatCard title="Produzido (Mês)" value={dashboardMetrics.monthPiecesProduced} icon={CalendarDays} color="bg-indigo-500" trend="Peças finalizadas" />
-                <StatCard title="Em Corte (Ativo)" value={dashboardMetrics.cuttingOrders} icon={Scissors} color="bg-purple-500" trend="Aguardando distribuição" />
-              </div>
-               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                 <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><TrendingUp size={20} className="text-indigo-600"/> Produção Semanal (7 Dias)</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={dashboardMetrics.weeklyData}>
-                                <defs><linearGradient id="colorPieces" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient></defs>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10}/>
-                                <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}}/>
-                                <Tooltip contentStyle={{backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0'}} />
-                                <Area type="monotone" dataKey="peças" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorPieces)" />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </div>
-                 </div>
-                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><CalendarDays size={20} className="text-emerald-600"/> Produção Mensal</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={dashboardMetrics.monthlyData}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10}/>
-                                <Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0'}} />
-                                <Bar dataKey="peças" fill="#10b981" radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                 </div>
-              </div>
-            </div>
-          )}
+          {activeTab === 'dashboard' && (<div className="space-y-8 animate-in fade-in duration-500"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"><StatCard title="Pedidos Planejados" value={dashboardMetrics.plannedOrdersCount} icon={ClipboardList} color="bg-blue-500" trend="Aguardando Corte" /><StatCard title="Costureiras Ativas" value={dashboardMetrics.activeSeamstressesCount} icon={Users} color="bg-pink-500" trend="Costurando agora" /><StatCard title="Produzido (Mês)" value={dashboardMetrics.monthPiecesProduced} icon={CalendarDays} color="bg-indigo-500" trend="Peças finalizadas" /><StatCard title="Em Corte (Ativo)" value={dashboardMetrics.cuttingOrders} icon={Scissors} color="bg-purple-500" trend="Aguardando distribuição" /></div><div className="grid grid-cols-1 lg:grid-cols-3 gap-6"><div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100"><h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><TrendingUp size={20} className="text-indigo-600"/> Produção Semanal (7 Dias)</h3><div className="h-64"><ResponsiveContainer width="100%" height="100%"><AreaChart data={dashboardMetrics.weeklyData}><defs><linearGradient id="colorPieces" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/><stop offset="95%" stopColor="#6366f1" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10}/><YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}}/><Tooltip contentStyle={{backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0'}} /><Area type="monotone" dataKey="peças" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorPieces)" /></AreaChart></ResponsiveContainer></div></div><div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100"><h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><CalendarDays size={20} className="text-emerald-600"/> Produção Mensal</h3><div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={dashboardMetrics.monthlyData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10}/><Tooltip cursor={{fill: 'transparent'}} contentStyle={{backgroundColor: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0'}} /><Bar dataKey="peças" fill="#10b981" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></div></div></div>)}
 
-          {activeTab === 'reports' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
-              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    <FileText className="text-indigo-600" /> Relatórios de Produção
-                  </h3>
-                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                    <div className="flex-1 md:w-40">
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Início</label>
-                      <input type="date" className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.startDate} onChange={e => setReportFilters({...reportFilters, startDate: e.target.value})}/>
-                    </div>
-                    <div className="flex-1 md:w-40">
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Fim</label>
-                      <input type="date" className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.endDate} onChange={e => setReportFilters({...reportFilters, endDate: e.target.value})}/>
-                    </div>
-                    <div className="flex-1 md:w-40">
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Tecido</label>
-                      <input type="text" placeholder="Buscar tecido..." className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.fabric} onChange={e => setReportFilters({...reportFilters, fabric: e.target.value})}/>
-                    </div>
-                    <div className="flex-1 md:w-40">
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Costureira</label>
-                      <input type="text" placeholder="Nome..." className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.seamstress} onChange={e => setReportFilters({...reportFilters, seamstress: e.target.value})}/>
-                    </div>
-                    <button onClick={() => setReportFilters({startDate: '', endDate: '', fabric: '', seamstress: ''})} className="self-end px-3 py-2 text-slate-400 hover:text-slate-600" title="Limpar Filtros"><Trash2 size={16}/></button>
-                  </div>
-                </div>
+          {activeTab === 'reports' && (<div className="space-y-6 animate-in fade-in duration-500"><div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100"><div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6"><h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><FileText className="text-indigo-600" /> Relatórios de Produção</h3><div className="flex flex-wrap gap-2 w-full md:w-auto"><div className="flex-1 md:w-40"><label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Início</label><input type="date" className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.startDate} onChange={e => setReportFilters({...reportFilters, startDate: e.target.value})}/></div><div className="flex-1 md:w-40"><label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Fim</label><input type="date" className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.endDate} onChange={e => setReportFilters({...reportFilters, endDate: e.target.value})}/></div><div className="flex-1 md:w-40"><label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Tecido</label><select className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none bg-white" value={reportFilters.fabric} onChange={e => setReportFilters({...reportFilters, fabric: e.target.value})}><option value="">Todos</option>{uniqueFabricNames.map(f => <option key={f} value={f}>{f}</option>)}</select></div><div className="flex-1 md:w-40"><label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Costureira</label><select className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none bg-white" value={reportFilters.seamstress} onChange={e => setReportFilters({...reportFilters, seamstress: e.target.value})}><option value="">Todas</option>{uniqueSeamstressNames.map(s => <option key={s} value={s}>{s}</option>)}</select></div><button onClick={() => setReportFilters({startDate: '', endDate: '', fabric: '', seamstress: ''})} className="self-end px-3 py-2 text-slate-400 hover:text-slate-600" title="Limpar Filtros"><Trash2 size={16}/></button></div></div>{aiInsights && (<div className="mb-8 p-6 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 shadow-sm relative overflow-hidden group"><div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform"><TrendingUp size={80} className="text-indigo-600" /></div><h4 className="text-indigo-900 font-bold mb-3 flex items-center gap-2"><TrendingUp size={18} /> Insights da Inteligência Artificial</h4><div className="prose prose-indigo prose-sm max-w-none text-indigo-800 whitespace-pre-wrap leading-relaxed">{aiInsights}</div></div>)}<div className="overflow-x-auto"><table className="w-full text-left border-collapse"><thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4">Pedido</th><th className="p-4">Data</th><th className="p-4">Referência</th><th className="p-4">Tecido</th><th className="p-4">Peças</th><th className="p-4">Status</th></tr></thead><tbody className="divide-y divide-slate-100 text-sm">{reportFilteredOrders.length === 0 ? (<tr><td colSpan={6} className="p-12 text-center text-slate-400 italic">Nenhum registro encontrado para estes filtros.</td></tr>) : (reportFilteredOrders.map(o => (<tr key={o.id} className="hover:bg-slate-50 transition-colors"><td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td><td className="p-4 text-slate-500">{new Date(o.createdAt).toLocaleDateString()}</td><td className="p-4"><div className="font-bold">{o.referenceCode}</div><div className="text-xs text-slate-400">{o.description}</div></td><td className="p-4 text-slate-600">{o.fabric}</td><td className="p-4 font-bold text-slate-700">{o.items.reduce((acc, i) => acc + (o.status === OrderStatus.PLANNED ? i.estimatedPieces : i.actualPieces), 0)}</td><td className="p-4"><span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : o.status === OrderStatus.SEWING ? 'bg-indigo-100 text-indigo-700' : o.status === OrderStatus.CUTTING ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>{o.status}</span></td></tr>)))}</tbody></table></div></div></div>)}
 
-                {aiInsights && (
-                  <div className="mb-8 p-6 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 shadow-sm relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
-                      <TrendingUp size={80} className="text-indigo-600" />
-                    </div>
-                    <h4 className="text-indigo-900 font-bold mb-3 flex items-center gap-2">
-                      <TrendingUp size={18} /> Insights da Inteligência Artificial
-                    </h4>
-                    <div className="prose prose-indigo prose-sm max-w-none text-indigo-800 whitespace-pre-wrap leading-relaxed">
-                      {aiInsights}
-                    </div>
-                  </div>
-                )}
+          {activeTab === 'fabrics' && (<div className="space-y-6 animate-in fade-in duration-500"><div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex gap-4 items-center flex-wrap"><div className="flex-1 min-w-[200px]"><label className="block text-xs font-bold text-slate-500 mb-1">Buscar Tecido</label><input type="text" placeholder="Ex: Viscose..." className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none" value={fabricFilters.name} onChange={e => setFabricFilters({...fabricFilters, name: e.target.value})}/></div></div><div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">{filteredFabrics.map(fabric => (<div key={fabric.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 relative group transition-all hover:shadow-md hover:border-indigo-200"><div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => { setFabricToEdit(fabric); setIsFabricModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1 bg-white rounded shadow-sm"><Edit2 size={16} /></button><button onClick={() => handleQuickStockAdd(fabric)} className="text-emerald-500 hover:text-emerald-700 p-1 bg-white rounded shadow-sm hover:bg-emerald-50"><PlusCircle size={16} /></button></div><div className="flex items-center gap-3 mb-4"><div className="w-12 h-12 rounded-full border-2 border-slate-100 shadow-inner" style={{backgroundColor: fabric.colorHex}}></div><div><h3 className="font-bold text-slate-800 text-lg">{fabric.name}</h3><p className="text-xs text-slate-500 font-medium">{fabric.color}</p></div></div><div className="bg-slate-50 rounded-xl p-3 mb-3 border border-slate-100"><p className="text-center"><span className="block text-xs text-slate-400 uppercase tracking-wider">Estoque Atual</span><span className={`text-2xl font-bold ${fabric.stockRolls < 10 ? 'text-red-500' : 'text-indigo-600'}`}>{fabric.stockRolls} <span className="text-sm text-slate-400 font-normal">rolos</span></span></p></div><div className="text-xs text-slate-400 border-t border-slate-50 pt-3"><p className="mb-1"><Clock size={10} className="inline mr-1"/> Atualizado: {new Date(fabric.updatedAt).toLocaleDateString()}</p></div></div>))}</div></div>)}
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold">
-                        <th className="p-4">Pedido</th>
-                        <th className="p-4">Data</th>
-                        <th className="p-4">Referência</th>
-                        <th className="p-4">Tecido</th>
-                        <th className="p-4">Peças</th>
-                        <th className="p-4">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-sm">
-                      {reportFilteredOrders.length === 0 ? (
-                        <tr><td colSpan={6} className="p-12 text-center text-slate-400 italic">Nenhum registro encontrado para estes filtros.</td></tr>
-                      ) : (
-                        reportFilteredOrders.map(o => (
-                          <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td>
-                            <td className="p-4 text-slate-500">{new Date(o.createdAt).toLocaleDateString()}</td>
-                            <td className="p-4">
-                              <div className="font-bold">{o.referenceCode}</div>
-                              <div className="text-xs text-slate-400">{o.description}</div>
-                            </td>
-                            <td className="p-4 text-slate-600">{o.fabric}</td>
-                            <td className="p-4 font-bold text-slate-700">
-                              {o.items.reduce((acc, i) => acc + (o.status === OrderStatus.PLANNED ? i.estimatedPieces : i.actualPieces), 0)}
-                            </td>
-                            <td className="p-4">
-                              <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' :
-                                o.status === OrderStatus.SEWING ? 'bg-indigo-100 text-indigo-700' :
-                                o.status === OrderStatus.CUTTING ? 'bg-purple-100 text-purple-700' :
-                                'bg-slate-100 text-slate-600'
-                              }`}>
-                                {o.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
+          {activeTab === 'production' && (<div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px] animate-in fade-in duration-500"><div className="flex p-2 bg-slate-100/50 border-b border-slate-200">{(Object.values(OrderStatus) as OrderStatus[]).map((status) => { const Icon = getStageIcon(status); const isActive = productionStage === status; const count = stageCounts[status]; return (<button key={status} onClick={() => setProductionStage(status)} className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-bold transition-all relative ${isActive ? 'bg-white text-indigo-700 shadow-md ring-1 ring-black/5' : 'text-slate-500 hover:bg-white/50 hover:text-slate-700'}`}><Icon size={16} className={isActive ? 'text-indigo-600' : 'text-slate-400'}/>{status}{count > 0 && <span className={`ml-1 text-xs px-2 py-0.5 rounded-full ${isActive ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'}`}>{count}</span>}</button>); })}</div><div className="overflow-x-auto flex-1"><table className="w-full text-left border-collapse"><thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4 w-10"></th><th className="p-4">Pedido / Data</th><th className="p-4">Ref / Descrição</th><th className="p-4">Tecido</th><th className="p-4 text-center">Peças Totais</th><th className="p-4 text-right">Ações</th></tr></thead><tbody className="divide-y divide-slate-100 text-sm text-slate-700">{filteredOrders.length === 0 ? (<tr><td colSpan={6} className="p-12 text-center text-slate-400"><div className="flex flex-col items-center gap-3"><Archive size={48} className="text-slate-200" /><p>Nenhum pedido na etapa <span className="font-bold text-slate-500">{productionStage}</span>.</p></div></td></tr>) : (filteredOrders.map(order => { const isExpanded = expandedOrders.includes(order.id); const itemsList = Array.isArray(order.items) ? order.items : []; const totalPieces = itemsList.reduce((acc, i) => acc + (order.status === OrderStatus.PLANNED ? (i.estimatedPieces || 0) : (i.actualPieces || 0)), 0); const cuttingList = Array.isArray(order.activeCuttingItems) ? order.activeCuttingItems : []; const itemsInCutting = cuttingList.reduce((acc, i) => acc + (i.actualPieces || 0), 0); return (<React.Fragment key={order.id}><tr className={`hover:bg-slate-50 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-50/50' : ''}`} onClick={() => setExpandedOrders(prev => prev.includes(order.id) ? prev.filter(id => id !== order.id) : [...prev, order.id])}><td className="p-4 text-center"><button className="text-slate-400 hover:text-indigo-600">{isExpanded ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button></td><td className="p-4"><div className="font-mono font-bold text-indigo-700 text-lg">#{order.id}</div><div className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleDateString('pt-BR')}</div></td><td className="p-4"><div className="font-bold text-indigo-900">{order.referenceCode}</div><div className="text-slate-500">{order.description}</div><div className="flex mt-1 gap-1">{itemsList.map(i => (<div key={i.color} className="w-3 h-3 rounded-full border border-slate-200" style={{backgroundColor: i.colorHex || '#999'}} title={i.color}></div>))}</div></td><td className="p-4 font-medium">{order.fabric}</td><td className="p-4 text-center"><span className="font-bold text-slate-700 text-lg">{totalPieces}</span></td><td className="p-4 text-right" onClick={(e) => e.stopPropagation()}><div className="flex justify-end gap-2 items-center">{order.status === OrderStatus.PLANNED && (<><button onClick={() => { setOrderToEdit(order); setIsOrderModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1.5" title="Editar Pedido"><Edit2 size={16} /></button><button onClick={() => initiateMoveToCutting(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md flex items-center gap-1"><Scissors size={14}/> Iniciar</button><div className="h-6 w-px bg-slate-200 mx-1"></div><button onClick={() => handleDeleteOrder(order.id)} className="text-slate-400 hover:text-red-500 p-1.5" title="Excluir Pedido"><Trash2 size={16} /></button></>)}{order.status === OrderStatus.CUTTING && itemsInCutting === 0 && cuttingList.length === 0 && (<button onClick={() => initiateConfirmCut(order)} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ClipboardList size={14} /> Confirmar</button>)}{((order.status === OrderStatus.CUTTING && itemsInCutting > 0) || order.status === OrderStatus.SEWING) && itemsInCutting > 0 && (<button onClick={() => initiateDistribute(order)} className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ArrowRightLeft size={14} /> Distribuir</button>)}</div></td></tr>{isExpanded && (<tr className="bg-slate-50 border-b border-slate-200"><td colSpan={6} className="p-6"><div className="flex flex-col gap-6">{(order.status === OrderStatus.CUTTING || order.status === OrderStatus.SEWING) && (<div className={`border rounded-xl p-4 shadow-sm bg-white border-purple-100`}><div className="flex justify-between items-center mb-3"><h4 className="font-bold text-slate-700 flex items-center gap-2"><Scissors size={18} className="text-purple-600"/> Estoque em Corte</h4></div><div className="grid grid-cols-2 md:grid-cols-4 gap-3">{cuttingList.length > 0 ? cuttingList.map((item, idx) => (<div key={idx} className={`p-3 rounded-lg border flex flex-col ${item.actualPieces > 0 ? 'bg-white border-slate-200 shadow-sm' : 'bg-slate-100 border-slate-200 opacity-50'}`}><div className="flex items-center gap-2 mb-1"><div className="w-3 h-3 rounded-full border border-slate-100" style={{backgroundColor: item.colorHex}}></div><span className="font-bold text-sm text-slate-700">{item.color}</span></div><div className="flex justify-between items-end mt-auto"><div className="flex flex-wrap gap-1 max-w-[70%]">{Object.entries(item.sizes || {}).map(([s, q]) => (q as number) > 0 && <span key={s} className="text-[10px] bg-slate-50 border border-slate-100 px-1 rounded text-slate-500">{s}:{q as number}</span>)}</div><span className="font-bold text-lg text-slate-800">{item.actualPieces}</span></div></div>)) : <p className="text-sm text-slate-400 italic col-span-4">Nenhum item no corte.</p>}</div></div>)}{Array.isArray(order.splits) && order.splits.length > 0 && (<div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm"><h4 className="font-bold text-slate-700 flex items-center gap-2 mb-3"><Users size={18} className="text-amber-600"/> Distribuições</h4><div className="space-y-3">{order.splits.map((split, idx) => (<div key={idx} className="flex flex-col md:flex-row gap-4 border border-slate-100 rounded-lg p-3 hover:bg-slate-50"><div className="flex-shrink-0 w-48 border-r border-slate-100 pr-4 flex flex-col justify-center"><div className="font-medium text-slate-800">{split.seamstressName}</div><div className={`text-xs font-bold px-2 py-0.5 rounded w-fit ${split.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{split.status}</div></div><div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2">{Array.isArray(split.items) && split.items.map((item, i) => (<div key={i} className="bg-white border border-slate-100 rounded p-2 text-sm"><span className="font-medium text-slate-600">{item.color}</span><div className="font-bold text-right text-slate-800">{item.actualPieces} pçs</div></div>))}</div><div className="flex-shrink-0 flex items-center pl-2 border-l border-slate-100">{split.status !== OrderStatus.FINISHED && (<button onClick={() => handleMarkSplitFinished(order.id, idx)} className="text-emerald-600 hover:bg-emerald-50 px-3 py-2 rounded-lg text-xs font-bold border border-emerald-200"><PackageCheck size={16} /> Baixa</button>)}</div></div>))}</div></div>)}</div></td></tr>)}</React.Fragment>); }))}</tbody></table></div></div>)}
 
-          {activeTab === 'fabrics' && (
-             <div className="space-y-6 animate-in fade-in duration-500">
-                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex gap-4 items-center flex-wrap">
-                    <div className="flex-1 min-w-[200px]">
-                        <label className="block text-xs font-bold text-slate-500 mb-1">Buscar Tecido</label>
-                        <input type="text" placeholder="Ex: Viscose..." className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none" value={fabricFilters.name} onChange={e => setFabricFilters({...fabricFilters, name: e.target.value})}/>
-                    </div>
-                 </div>
-                 <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                    {filteredFabrics.map(fabric => (
-                        <div key={fabric.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 relative group transition-all hover:shadow-md hover:border-indigo-200">
-                             <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => { setFabricToEdit(fabric); setIsFabricModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1 bg-white rounded shadow-sm"><Edit2 size={16} /></button>
-                                <button onClick={() => handleQuickStockAdd(fabric)} className="text-emerald-500 hover:text-emerald-700 p-1 bg-white rounded shadow-sm hover:bg-emerald-50"><PlusCircle size={16} /></button>
-                             </div>
-                             <div className="flex items-center gap-3 mb-4">
-                                 <div className="w-12 h-12 rounded-full border-2 border-slate-100 shadow-inner" style={{backgroundColor: fabric.colorHex}}></div>
-                                 <div><h3 className="font-bold text-slate-800 text-lg">{fabric.name}</h3><p className="text-xs text-slate-500 font-medium">{fabric.color}</p></div>
-                             </div>
-                             <div className="bg-slate-50 rounded-xl p-3 mb-3 border border-slate-100"><p className="text-center"><span className="block text-xs text-slate-400 uppercase tracking-wider">Estoque Atual</span><span className={`text-2xl font-bold ${fabric.stockRolls < 10 ? 'text-red-500' : 'text-indigo-600'}`}>{fabric.stockRolls} <span className="text-sm text-slate-400 font-normal">rolos</span></span></p></div>
-                             <div className="text-xs text-slate-400 border-t border-slate-50 pt-3"><p className="mb-1"><Clock size={10} className="inline mr-1"/> Atualizado: {new Date(fabric.updatedAt).toLocaleDateString()}</p></div>
-                        </div>
-                    ))}
-                 </div>
-             </div>
-          )}
+          {activeTab === 'products' && (<div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in fade-in duration-500"><table className="w-full text-left border-collapse"><thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4">Código</th><th className="p-4">Descrição</th><th className="p-4">Tecido</th><th className="p-4">Cores</th><th className="p-4 text-right">Ações</th></tr></thead><tbody className="divide-y divide-slate-100 text-sm text-slate-700">{references.map(ref => (<tr key={ref.id} className="hover:bg-slate-50"><td className="p-4 font-bold text-indigo-900">{ref.code}</td><td className="p-4">{ref.description}</td><td className="p-4">{ref.defaultFabric}</td><td className="p-4"><div className="flex gap-2 flex-wrap">{Array.isArray(ref.defaultColors) && ref.defaultColors.map(c => (<div key={c.name} className="flex items-center gap-1 text-xs bg-white border border-slate-200 pl-1 pr-2 py-1 rounded-full shadow-sm"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: c.hex }}></div><span>{c.name}</span></div>))}</div></td><td className="p-4 text-right"><div className="flex justify-end gap-2"><button onClick={() => {setEditingProduct(ref); setIsProductModalOpen(true);}} className="text-indigo-400 hover:text-indigo-600 p-2"><Edit2 size={16} /></button><button onClick={() => handleDeleteProduct(ref.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={16} /></button></div></td></tr>))}</tbody></table></div>)}
 
-          {activeTab === 'production' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px] animate-in fade-in duration-500">
-              <div className="flex p-2 bg-slate-100/50 border-b border-slate-200">
-                {(Object.values(OrderStatus) as OrderStatus[]).map((status) => {
-                    const Icon = getStageIcon(status);
-                    const isActive = productionStage === status;
-                    const count = stageCounts[status];
-                    return (
-                        <button key={status} onClick={() => setProductionStage(status)} className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-bold transition-all relative ${isActive ? 'bg-white text-indigo-700 shadow-md ring-1 ring-black/5' : 'text-slate-500 hover:bg-white/50 hover:text-slate-700'}`}>
-                            <Icon size={16} className={isActive ? 'text-indigo-600' : 'text-slate-400'}/>
-                            {status}
-                            {count > 0 && <span className={`ml-1 text-xs px-2 py-0.5 rounded-full ${isActive ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-200 text-slate-600'}`}>{count}</span>}
-                        </button>
-                    );
-                })}
-              </div>
-              <div className="overflow-x-auto flex-1">
-                <table className="w-full text-left border-collapse">
-                  <thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4 w-10"></th><th className="p-4">Pedido / Data</th><th className="p-4">Ref / Descrição</th><th className="p-4">Tecido</th><th className="p-4 text-center">Peças Totais</th><th className="p-4 text-right">Ações</th></tr></thead>
-                  <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                    {filteredOrders.length === 0 ? (<tr><td colSpan={6} className="p-12 text-center text-slate-400"><div className="flex flex-col items-center gap-3"><Archive size={48} className="text-slate-200" /><p>Nenhum pedido na etapa <span className="font-bold text-slate-500">{productionStage}</span>.</p></div></td></tr>) : (
-                      filteredOrders.map(order => {
-                        const isExpanded = expandedOrders.includes(order.id);
-                        const itemsList = Array.isArray(order.items) ? order.items : [];
-                        const totalPieces = itemsList.reduce((acc, i) => acc + (order.status === OrderStatus.PLANNED ? (i.estimatedPieces || 0) : (i.actualPieces || 0)), 0);
-                        const cuttingList = Array.isArray(order.activeCuttingItems) ? order.activeCuttingItems : [];
-                        const itemsInCutting = cuttingList.reduce((acc, i) => acc + (i.actualPieces || 0), 0);
-                        return (
-                          <React.Fragment key={order.id}>
-                            <tr className={`hover:bg-slate-50 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-50/50' : ''}`} onClick={() => setExpandedOrders(prev => prev.includes(order.id) ? prev.filter(id => id !== order.id) : [...prev, order.id])}>
-                              <td className="p-4 text-center"><button className="text-slate-400 hover:text-indigo-600">{isExpanded ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button></td>
-                              <td className="p-4"><div className="font-mono font-bold text-indigo-700 text-lg">#{order.id}</div><div className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleDateString('pt-BR')}</div></td>
-                              <td className="p-4"><div className="font-bold text-indigo-900">{order.referenceCode}</div><div className="text-slate-500">{order.description}</div><div className="flex mt-1 gap-1">{itemsList.map(i => (<div key={i.color} className="w-3 h-3 rounded-full border border-slate-200" style={{backgroundColor: i.colorHex || '#999'}} title={i.color}></div>))}</div></td>
-                              <td className="p-4 font-medium">{order.fabric}</td>
-                              <td className="p-4 text-center"><span className="font-bold text-slate-700 text-lg">{totalPieces}</span></td>
-                              <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
-                                <div className="flex justify-end gap-2 items-center">
-                                    {order.status === OrderStatus.PLANNED && (
-                                      <>
-                                        <button onClick={() => { setOrderToEdit(order); setIsOrderModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1.5" title="Editar Pedido"><Edit2 size={16} /></button>
-                                        <button onClick={() => initiateMoveToCutting(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md flex items-center gap-1"><Scissors size={14}/> Iniciar</button>
-                                        <div className="h-6 w-px bg-slate-200 mx-1"></div>
-                                        <button onClick={() => handleDeleteOrder(order.id)} className="text-slate-400 hover:text-red-500 p-1.5" title="Excluir Pedido"><Trash2 size={16} /></button>
-                                      </>
-                                    )}
-                                    {order.status === OrderStatus.CUTTING && itemsInCutting === 0 && cuttingList.length === 0 && (
-                                      <button onClick={() => initiateConfirmCut(order)} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ClipboardList size={14} /> Confirmar</button>
-                                    )}
-                                    {((order.status === OrderStatus.CUTTING && itemsInCutting > 0) || order.status === OrderStatus.SEWING) && itemsInCutting > 0 && (
-                                      <button onClick={() => initiateDistribute(order)} className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ArrowRightLeft size={14} /> Distribuir</button>
-                                    )}
-                                </div>
-                              </td>
-                            </tr>
-                            {isExpanded && (
-                                <tr className="bg-slate-50 border-b border-slate-200"><td colSpan={6} className="p-6">
-                                        <div className="flex flex-col gap-6">
-                                            {(order.status === OrderStatus.CUTTING || order.status === OrderStatus.SEWING) && (
-                                                <div className={`border rounded-xl p-4 shadow-sm bg-white border-purple-100`}>
-                                                    <div className="flex justify-between items-center mb-3"><h4 className="font-bold text-slate-700 flex items-center gap-2"><Scissors size={18} className="text-purple-600"/> Estoque em Corte</h4></div>
-                                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                                        {cuttingList.length > 0 ? cuttingList.map((item, idx) => (
-                                                            <div key={idx} className={`p-3 rounded-lg border flex flex-col ${item.actualPieces > 0 ? 'bg-white border-slate-200 shadow-sm' : 'bg-slate-100 border-slate-200 opacity-50'}`}>
-                                                                <div className="flex items-center gap-2 mb-1"><div className="w-3 h-3 rounded-full border border-slate-100" style={{backgroundColor: item.colorHex}}></div><span className="font-bold text-sm text-slate-700">{item.color}</span></div>
-                                                                <div className="flex justify-between items-end mt-auto"><div className="flex flex-wrap gap-1 max-w-[70%]">{Object.entries(item.sizes || {}).map(([s, q]) => (q as number) > 0 && <span key={s} className="text-[10px] bg-slate-50 border border-slate-100 px-1 rounded text-slate-500">{s}:{q as number}</span>)}</div><span className="font-bold text-lg text-slate-800">{item.actualPieces}</span></div>
-                                                            </div>
-                                                        )) : <p className="text-sm text-slate-400 italic col-span-4">Nenhum item no corte.</p>}
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {Array.isArray(order.splits) && order.splits.length > 0 && (
-                                                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm"><h4 className="font-bold text-slate-700 flex items-center gap-2 mb-3"><Users size={18} className="text-amber-600"/> Distribuições</h4>
-                                                    <div className="space-y-3">
-                                                        {order.splits.map((split, idx) => (
-                                                            <div key={idx} className="flex flex-col md:flex-row gap-4 border border-slate-100 rounded-lg p-3 hover:bg-slate-50">
-                                                                <div className="flex-shrink-0 w-48 border-r border-slate-100 pr-4 flex flex-col justify-center">
-                                                                    <div className="font-medium text-slate-800">{split.seamstressName}</div>
-                                                                    <div className={`text-xs font-bold px-2 py-0.5 rounded w-fit ${split.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>{split.status}</div>
-                                                                </div>
-                                                                <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-2">
-                                                                     {Array.isArray(split.items) && split.items.map((item, i) => (<div key={i} className="bg-white border border-slate-100 rounded p-2 text-sm"><span className="font-medium text-slate-600">{item.color}</span><div className="font-bold text-right text-slate-800">{item.actualPieces} pçs</div></div>))}
-                                                                </div>
-                                                                <div className="flex-shrink-0 flex items-center pl-2 border-l border-slate-100">{split.status !== OrderStatus.FINISHED && (<button onClick={() => handleMarkSplitFinished(order.id, idx)} className="text-emerald-600 hover:bg-emerald-50 px-3 py-2 rounded-lg text-xs font-bold border border-emerald-200"><PackageCheck size={16} /> Baixa</button>)}</div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </td></tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'products' && (
-             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in fade-in duration-500">
-                <table className="w-full text-left border-collapse">
-                  <thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4">Código</th><th className="p-4">Descrição</th><th className="p-4">Tecido</th><th className="p-4">Cores</th><th className="p-4 text-right">Ações</th></tr></thead>
-                  <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-                    {references.map(ref => (
-                      <tr key={ref.id} className="hover:bg-slate-50">
-                        <td className="p-4 font-bold text-indigo-900">{ref.code}</td>
-                        <td className="p-4">{ref.description}</td>
-                        <td className="p-4">{ref.defaultFabric}</td>
-                        <td className="p-4"><div className="flex gap-2 flex-wrap">{Array.isArray(ref.defaultColors) && ref.defaultColors.map(c => (<div key={c.name} className="flex items-center gap-1 text-xs bg-white border border-slate-200 pl-1 pr-2 py-1 rounded-full shadow-sm"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: c.hex }}></div><span>{c.name}</span></div>))}</div></td>
-                        <td className="p-4 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button onClick={() => {setEditingProduct(ref); setIsProductModalOpen(true);}} className="text-indigo-400 hover:text-indigo-600 p-2"><Edit2 size={16} /></button>
-                            <button onClick={() => handleDeleteProduct(ref.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={16} /></button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-             </div>
-          )}
-
-          {activeTab === 'seamstresses' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
-              {seamstresses.map(seamstress => (
-                  <div key={seamstress.id} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative group">
-                    <button onClick={() => { setSeamstressToEdit(seamstress); setIsSeamstressModalOpen(true); }} className="absolute top-4 right-4 text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100"><Edit2 size={18} /></button>
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-xl font-bold">{seamstress.name.charAt(0)}</div>
-                        <div><h3 className="font-bold text-slate-800">{seamstress.name}</h3><p className="text-xs text-slate-500">{seamstress.specialty}</p></div>
-                      </div>
-                      <span className={`w-3 h-3 rounded-full ${seamstress.active ? 'bg-emerald-500' : 'bg-slate-300'}`}></span>
-                    </div>
-                  </div>
-              ))}
-            </div>
-          )}
+          {activeTab === 'seamstresses' && (<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">{seamstresses.map(seamstress => (<div key={seamstress.id} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative group"><button onClick={() => { setSeamstressToEdit(seamstress); setIsSeamstressModalOpen(true); }} className="absolute top-4 right-4 text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100"><Edit2 size={18} /></button><div className="flex items-start justify-between mb-4"><div className="flex items-center gap-4"><div className="w-12 h-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-xl font-bold">{seamstress.name.charAt(0)}</div><div><h3 className="font-bold text-slate-800">{seamstress.name}</h3><p className="text-xs text-slate-500">{seamstress.specialty}</p></div></div><span className={`w-3 h-3 rounded-full ${seamstress.active ? 'bg-emerald-500' : 'bg-slate-300'}`}></span></div></div>))}</div>)}
         </div>
       </main>
 

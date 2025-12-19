@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { ProductionOrder, Seamstress } from "../types";
 
@@ -6,15 +7,8 @@ export const generateProductionInsights = async (
   seamstresses: Seamstress[]
 ): Promise<string> => {
   try {
-    const apiKey = process.env.API_KEY;
-
-    if (!apiKey) {
-      console.warn("API Key do Google Gemini não encontrada.");
-      return "Configuração de IA pendente: Adicione a variável API_KEY nas configurações da Vercel.";
-    }
-
-    // Initialize client only when requested and key is present
-    const ai = new GoogleGenAI({ apiKey });
+    // Initializing Gemini client with process.env.API_KEY as per guidelines
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
     const dataContext = JSON.stringify({
       orders: orders.map(o => ({
@@ -22,11 +16,11 @@ export const generateProductionInsights = async (
         status: o.status,
         fabric: o.fabric,
         totalItems: o.items.length,
-        cuttingStock: o.activeCuttingItems.reduce((acc, i) => acc + i.actualPieces, 0),
+        cuttingStock: o.activeCuttingItems.reduce((acc, i) => acc + (i.actualPieces || 0), 0),
         distributions: (o.splits || []).map(s => ({
             seamstress: s.seamstressName,
             status: s.status,
-            pieces: s.items.reduce((acc, i) => acc + i.actualPieces, 0)
+            pieces: s.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0)
         }))
       })),
       seamstresses: seamstresses.map(s => ({ name: s.name, specialty: s.specialty }))
@@ -47,11 +41,13 @@ export const generateProductionInsights = async (
       ${dataContext}
     `;
 
+    // Using 'gemini-3-flash-preview' for basic text tasks as per model selection rules
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
     });
 
+    // Accessing .text property directly (not a method) as per SDK rules
     return response.text || "Não foi possível gerar a análise no momento.";
   } catch (error) {
     console.error("Erro ao gerar insights:", error);
