@@ -97,6 +97,14 @@ export default function App() {
   const [loadingAi, setLoadingAi] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Estados dos filtros de relatório
+  const [reportFilters, setReportFilters] = useState({
+    startDate: '',
+    endDate: '',
+    fabric: '',
+    seamstress: ''
+  });
+
   const [fabricFilters, setFabricFilters] = useState({
     name: '',
     color: '',
@@ -138,13 +146,11 @@ export default function App() {
     const totalOrders = orders.length;
     const plannedOrdersCount = orders.filter(o => o.status === OrderStatus.PLANNED).length;
     const cuttingOrders = orders.filter(o => o.status === OrderStatus.CUTTING).length;
-    const sewingPackets = orders.reduce((acc, o) => acc + (Array.isArray(o.splits) ? o.splits.filter(s => s.status === OrderStatus.SEWING).length : 0), 0);
     
     const activeSeamstressesCount = new Set(
         orders.flatMap(o => (Array.isArray(o.splits) ? o.splits : []).filter(s => s.status === OrderStatus.SEWING).map(s => s.seamstressId))
     ).size;
 
-    let totalPiecesProduced = 0;
     let monthPiecesProduced = 0;
     const now = new Date();
     const currentMonth = now.getMonth();
@@ -154,8 +160,6 @@ export default function App() {
         (Array.isArray(order.splits) ? order.splits : []).forEach(split => {
             if (split.status === OrderStatus.FINISHED) {
                 const pieces = Array.isArray(split.items) ? split.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0) : 0;
-                totalPiecesProduced += pieces;
-
                 if (split.finishedAt) {
                     const finishedDate = new Date(split.finishedAt);
                     if (finishedDate.getMonth() === currentMonth && finishedDate.getFullYear() === currentYear) {
@@ -216,7 +220,7 @@ export default function App() {
         weeklyData,
         monthlyData
     };
-  }, [orders, seamstresses]);
+  }, [orders]);
 
   const stageCounts = useMemo(() => {
       return {
@@ -558,6 +562,89 @@ export default function App() {
     setLoadingAi(false);
   };
 
+  const handlePrintPlannedOrders = () => {
+    const plannedOrders = orders.filter(o => o.status === OrderStatus.PLANNED);
+    if (plannedOrders.length === 0) return alert("Não há pedidos planejados para imprimir.");
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    let content = `
+      <html>
+        <head>
+          <title>Pedidos Planejados - Kavin's</title>
+          <style>
+            body { font-family: 'Inter', sans-serif; font-size: 10pt; color: #333; margin: 20px; }
+            h1 { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; font-size: 16pt; }
+            .order-block { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; page-break-inside: avoid; }
+            .order-header { display: flex; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 5px; margin-bottom: 8px; }
+            .ref { font-weight: bold; font-size: 11pt; color: #1e1b4b; }
+            .fabric-info { margin-bottom: 5px; font-style: italic; color: #555; }
+            .items-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
+            .items-table th { text-align: left; font-size: 9pt; color: #777; border-bottom: 1px solid #eee; padding: 2px; }
+            .items-table td { padding: 4px 2px; border-bottom: 1px dotted #eee; }
+            .blank-space { width: 120px; border-bottom: 1px solid #333; display: inline-block; height: 12px; margin-left: 10px; }
+            .total-info { font-size: 8pt; color: #999; text-align: right; margin-top: 4px; }
+          </style>
+        </head>
+        <body>
+          <h1>Relatório de Pedidos Planejados - Kavin's</h1>
+    `;
+
+    plannedOrders.forEach(o => {
+      const fabricObj = fabrics.find(f => f.name.toLowerCase() === o.fabric.toLowerCase());
+      const fabricNotes = fabricObj?.notes ? `(${fabricObj.notes})` : '';
+
+      content += `
+        <div class="order-block">
+          <div class="order-header">
+            <span class="ref">Ref: ${o.referenceCode} - ${o.description}</span>
+            <span>ID: #${o.id} | Data: ${new Date(o.createdAt).toLocaleDateString()}</span>
+          </div>
+          <div class="fabric-info">
+            <strong>Tecido:</strong> ${o.fabric} ${fabricNotes}
+          </div>
+          <table class="items-table">
+            <thead>
+              <tr>
+                <th>Cor</th>
+                <th>Rolos</th>
+                <th>Conferência / Espaço em Branco</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      o.items.forEach(item => {
+        content += `
+          <tr>
+            <td style="width: 30%">${item.color}</td>
+            <td style="width: 15%">${item.rollsUsed} rolos</td>
+            <td><div class="blank-space"></div></td>
+          </tr>
+        `;
+      });
+
+      content += `
+            </tbody>
+          </table>
+          <div class="total-info">
+            Total estimado: ${o.items.reduce((acc, i) => acc + i.estimatedPieces, 0)} peças
+          </div>
+        </div>
+      `;
+    });
+
+    content += `
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(content);
+    printWindow.document.close();
+    printWindow.print();
+  };
+
   const filteredFabrics = useMemo(() => {
     return fabrics.filter(f => {
         const matchesName = f.name.toLowerCase().includes(fabricFilters.name.toLowerCase());
@@ -572,6 +659,23 @@ export default function App() {
     o.id.includes(searchTerm)) &&
     o.status === productionStage
   );
+
+  // Filtros avançados para a aba de Relatórios
+  const reportFilteredOrders = useMemo(() => {
+    return orders.filter(o => {
+      const orderDate = new Date(o.createdAt).toISOString().split('T')[0];
+      const startMatch = reportFilters.startDate ? orderDate >= reportFilters.startDate : true;
+      const endMatch = reportFilters.endDate ? orderDate <= reportFilters.endDate : true;
+      const fabricMatch = reportFilters.fabric ? o.fabric.toLowerCase().includes(reportFilters.fabric.toLowerCase()) : true;
+      
+      // Filtro por costureira (verifica nos splits)
+      const seamstressMatch = reportFilters.seamstress 
+        ? (o.splits || []).some(s => s.seamstressName.toLowerCase().includes(reportFilters.seamstress.toLowerCase()))
+        : true;
+
+      return startMatch && endMatch && fabricMatch && seamstressMatch;
+    });
+  }, [orders, reportFilters]);
 
   const getStageIcon = (stage: OrderStatus) => {
       switch(stage) {
@@ -640,6 +744,11 @@ export default function App() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                     <input type="text" placeholder="Buscar ordem..." className="pl-10 pr-4 py-2 rounded-full border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none w-64 transition-all" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 </div>
+                {productionStage === OrderStatus.PLANNED && (
+                  <button onClick={handlePrintPlannedOrders} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-full font-medium flex items-center gap-2 transition-all active:scale-95 border border-slate-300">
+                    <Printer size={18} /> Imprimir PDF
+                  </button>
+                )}
                 <button onClick={() => { setOrderToEdit(null); setIsOrderModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Ordem</button>
               </>
             )}
@@ -705,14 +814,28 @@ export default function App() {
           {activeTab === 'reports' && (
             <div className="space-y-6 animate-in fade-in duration-500">
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                <div className="flex justify-between items-center mb-6">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                   <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    <FileText className="text-indigo-600" /> Relatório Geral de Produção
+                    <FileText className="text-indigo-600" /> Relatórios de Produção
                   </h3>
-                  <div className="flex gap-2">
-                    <button className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50">
-                      <Download size={16} /> Exportar PDF
-                    </button>
+                  <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                    <div className="flex-1 md:w-40">
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Início</label>
+                      <input type="date" className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.startDate} onChange={e => setReportFilters({...reportFilters, startDate: e.target.value})}/>
+                    </div>
+                    <div className="flex-1 md:w-40">
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Fim</label>
+                      <input type="date" className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.endDate} onChange={e => setReportFilters({...reportFilters, endDate: e.target.value})}/>
+                    </div>
+                    <div className="flex-1 md:w-40">
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Tecido</label>
+                      <input type="text" placeholder="Buscar tecido..." className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.fabric} onChange={e => setReportFilters({...reportFilters, fabric: e.target.value})}/>
+                    </div>
+                    <div className="flex-1 md:w-40">
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Costureira</label>
+                      <input type="text" placeholder="Nome..." className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.seamstress} onChange={e => setReportFilters({...reportFilters, seamstress: e.target.value})}/>
+                    </div>
+                    <button onClick={() => setReportFilters({startDate: '', endDate: '', fabric: '', seamstress: ''})} className="self-end px-3 py-2 text-slate-400 hover:text-slate-600" title="Limpar Filtros"><Trash2 size={16}/></button>
                   </div>
                 </div>
 
@@ -743,30 +866,34 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-sm">
-                      {orders.map(o => (
-                        <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td>
-                          <td className="p-4 text-slate-500">{new Date(o.createdAt).toLocaleDateString()}</td>
-                          <td className="p-4">
-                            <div className="font-bold">{o.referenceCode}</div>
-                            <div className="text-xs text-slate-400">{o.description}</div>
-                          </td>
-                          <td className="p-4 text-slate-600">{o.fabric}</td>
-                          <td className="p-4 font-bold text-slate-700">
-                            {o.items.reduce((acc, i) => acc + (o.status === OrderStatus.PLANNED ? i.estimatedPieces : i.actualPieces), 0)}
-                          </td>
-                          <td className="p-4">
-                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                              o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' :
-                              o.status === OrderStatus.SEWING ? 'bg-indigo-100 text-indigo-700' :
-                              o.status === OrderStatus.CUTTING ? 'bg-purple-100 text-purple-700' :
-                              'bg-slate-100 text-slate-600'
-                            }`}>
-                              {o.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {reportFilteredOrders.length === 0 ? (
+                        <tr><td colSpan={6} className="p-12 text-center text-slate-400 italic">Nenhum registro encontrado para estes filtros.</td></tr>
+                      ) : (
+                        reportFilteredOrders.map(o => (
+                          <tr key={o.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td>
+                            <td className="p-4 text-slate-500">{new Date(o.createdAt).toLocaleDateString()}</td>
+                            <td className="p-4">
+                              <div className="font-bold">{o.referenceCode}</div>
+                              <div className="text-xs text-slate-400">{o.description}</div>
+                            </td>
+                            <td className="p-4 text-slate-600">{o.fabric}</td>
+                            <td className="p-4 font-bold text-slate-700">
+                              {o.items.reduce((acc, i) => acc + (o.status === OrderStatus.PLANNED ? i.estimatedPieces : i.actualPieces), 0)}
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                                o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' :
+                                o.status === OrderStatus.SEWING ? 'bg-indigo-100 text-indigo-700' :
+                                o.status === OrderStatus.CUTTING ? 'bg-purple-100 text-purple-700' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {o.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
