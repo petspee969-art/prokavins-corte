@@ -228,6 +228,16 @@ app.patch('/api/orders/:id', async (req, res) => {
   }
 });
 
+// Fix: Added missing DELETE route for orders
+app.delete('/api/orders/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM orders WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // --- TECIDOS ---
 app.get('/api/fabrics', async (req, res) => {
   try {
