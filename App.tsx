@@ -10,27 +10,20 @@ import {
   Shirt,
   Tags,
   Trash2,
-  ArrowRightLeft,
   ChevronDown,
   ChevronUp,
   Edit2,
   PackageCheck,
   ClipboardList,
-  Archive,
   CalendarDays,
-  TrendingUp,
-  AlertCircle,
   FileText,
-  Filter,
   MapPin,
-  Clock,
   Loader2,
-  Scroll,
   Printer,
   Layers,
-  PlusCircle,
-  Download,
-  Phone
+  Phone,
+  Clock,
+  AlertCircle
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -40,8 +33,9 @@ import {
   CartesianGrid, 
   Tooltip, 
   ResponsiveContainer,
-  AreaChart,
-  Area
+  LineChart,
+  Line,
+  Legend
 } from 'recharts';
 
 import { StatCard } from './components/StatCard';
@@ -51,8 +45,7 @@ import { CutConfirmationModal } from './components/CutConfirmationModal';
 import { DistributeModal } from './components/DistributeModal';
 import { SeamstressModal } from './components/SeamstressModal';
 import { FabricModal } from './components/FabricModal';
-import { generateProductionInsights } from './services/geminiService';
-import { ProductionOrder, Seamstress, OrderStatus, ProductReference, SizeDistribution, ProductionOrderItem, OrderSplit, Fabric } from './types';
+import { ProductionOrder, Seamstress, OrderStatus, ProductReference, ProductionOrderItem, OrderSplit, Fabric } from './types';
 
 const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
   const response = await fetch(`/api/${endpoint}`, {
@@ -102,8 +95,6 @@ export default function App() {
   const [seamstressToEdit, setSeamstressToEdit] = useState<Seamstress | null>(null);
   const [fabricToEdit, setFabricToEdit] = useState<Fabric | null>(null);
   
-  const [aiInsights, setAiInsights] = useState<string | null>(null);
-  const [loadingAi, setLoadingAi] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   const [reportFilters, setReportFilters] = useState({
@@ -153,48 +144,81 @@ export default function App() {
   const dashboardMetrics = useMemo(() => {
     const plannedCount = orders.filter(o => o.status === OrderStatus.PLANNED).length;
     const cuttingCount = orders.filter(o => o.status === OrderStatus.CUTTING).length;
-    const activeSeamstressesCount = new Set(
-        orders.flatMap(o => (Array.isArray(o.splits) ? o.splits : []).filter(s => s.status === OrderStatus.SEWING).map(s => s.seamstressId))
-    ).size;
-
-    let monthPiecesProduced = 0;
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    orders.forEach(order => {
-        (Array.isArray(order.splits) ? order.splits : []).forEach(split => {
-            if (split.status === OrderStatus.FINISHED && split.finishedAt) {
-                const finishedDate = new Date(split.finishedAt);
-                if (finishedDate.getMonth() === currentMonth && finishedDate.getFullYear() === currentYear) {
-                    monthPiecesProduced += Array.isArray(split.items) ? split.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0) : 0;
-                }
-            }
-        });
+    
+    // Gráfico Semanal (7 dias)
+    const weeklyData = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      const dateStr = d.toLocaleDateString('pt-BR', { weekday: 'short' });
+      const dateIso = d.toISOString().split('T')[0];
+      
+      const count = orders.reduce((acc, o) => {
+        return acc + (o.splits || []).reduce((sAcc, s) => {
+          if (s.finishedAt && s.finishedAt.startsWith(dateIso)) {
+            return sAcc + s.items.reduce((iAcc, i) => iAcc + (i.actualPieces || 0), 0);
+          }
+          return sAcc;
+        }, 0);
+      }, 0);
+      
+      return { name: dateStr, pecas: count };
     });
 
-    return { plannedOrdersCount: plannedCount, activeSeamstressesCount, monthPiecesProduced, cuttingOrders: cuttingCount };
+    // Gráfico Mensal (últimos 6 meses)
+    const monthlyData = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date();
+      d.setMonth(d.getMonth() - (5 - i));
+      const monthStr = d.toLocaleDateString('pt-BR', { month: 'short' });
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      
+      const count = orders.reduce((acc, o) => {
+        return acc + (o.splits || []).reduce((sAcc, s) => {
+          if (s.finishedAt) {
+            const fDate = new Date(s.finishedAt);
+            if (fDate.getMonth() === month && fDate.getFullYear() === year) {
+              return sAcc + s.items.reduce((iAcc, i) => iAcc + (i.actualPieces || 0), 0);
+            }
+          }
+          return sAcc;
+        }, 0);
+      }, 0);
+      
+      return { name: monthStr, pecas: count };
+    });
+
+    return { plannedOrdersCount: plannedCount, cuttingOrders: cuttingCount, weeklyData, monthlyData };
   }, [orders]);
 
   const handleCreateOrder = async (newOrderData: Omit<ProductionOrder, 'updatedAt'>) => {
     try {
         const existingIndex = orders.findIndex(o => o.id === newOrderData.id);
         const timestamp = new Date().toISOString();
+        
+        // Garantir que campos críticos estão presentes
+        const payload = { 
+          ...newOrderData, 
+          updatedAt: timestamp,
+          // Se for novo, garantir campos de fluxo
+          activeCuttingItems: newOrderData.activeCuttingItems || [],
+          splits: newOrderData.splits || []
+        };
+
         if (existingIndex > -1) {
             await apiFetch(`orders/${newOrderData.id}`, {
                 method: 'PATCH',
-                body: JSON.stringify({ ...newOrderData, updatedAt: timestamp })
+                body: JSON.stringify(payload)
             });
-            setOrders(prev => prev.map(o => o.id === newOrderData.id ? { ...newOrderData, updatedAt: timestamp } as ProductionOrder : o));
+            setOrders(prev => prev.map(o => o.id === newOrderData.id ? payload as ProductionOrder : o));
         } else {
             await apiFetch('orders', {
                 method: 'POST',
-                body: JSON.stringify({ ...newOrderData, updatedAt: timestamp })
+                body: JSON.stringify(payload)
             });
-            setOrders(prev => [{ ...newOrderData, updatedAt: timestamp } as ProductionOrder, ...prev]);
+            setOrders(prev => [payload as ProductionOrder, ...prev]);
         }
     } catch (error) {
-        alert("Erro ao salvar pedido.");
+        alert("Erro ao salvar pedido: " + (error as Error).message);
     }
   };
 
@@ -207,10 +231,7 @@ export default function App() {
       }
   };
 
-  // Fixed initiateMoveToCutting and added production lifecycle management
-  const initiateMoveToCutting = (order: ProductionOrder) => {
-    setCuttingOrder(order);
-  };
+  const initiateMoveToCutting = (order: ProductionOrder) => setCuttingOrder(order);
 
   const handleConfirmCut = async (updatedItems: ProductionOrderItem[], activeItems: ProductionOrderItem[]) => {
     if (!cuttingOrder) return;
@@ -233,14 +254,11 @@ export default function App() {
       setProductionStage(OrderStatus.CUTTING);
       setCuttingOrder(null);
     } catch (error) {
-      console.error("Error confirming cut:", error);
       alert("Erro ao confirmar corte.");
     }
   };
 
-  const initiateDistribution = (order: ProductionOrder) => {
-    setDistributingOrder(order);
-  };
+  const initiateDistribution = (order: ProductionOrder) => setDistributingOrder(order);
 
   const handleDistribute = async (originalOrderId: string, distributionMap: {color: string, sizes: any}[], seamstressId: string) => {
     const order = orders.find(o => o.id === originalOrderId);
@@ -270,16 +288,13 @@ export default function App() {
         createdAt: timestamp
       };
 
-      // Update activeCuttingItems: subtract what was sent
       const newActiveItems = order.activeCuttingItems.map(item => {
           const sent = distributionMap.find(d => d.color === item.color);
           if (!sent) return item;
-
           const updatedSizes = { ...item.sizes };
           Object.keys(sent.sizes).forEach(size => {
               updatedSizes[size] = Math.max(0, (updatedSizes[size] || 0) - (sent.sizes[size] || 0));
           });
-
           return {
               ...item,
               sizes: updatedSizes,
@@ -303,7 +318,6 @@ export default function App() {
       setOrders(prev => prev.map(o => o.id === order.id ? updatedOrder : o));
       setProductionStage(OrderStatus.SEWING);
     } catch (error) {
-      console.error("Error distributing order:", error);
       alert("Erro ao distribuir pedido.");
     }
   };
@@ -311,7 +325,6 @@ export default function App() {
   const handleFinishSplit = async (orderId: string, splitId: string) => {
       const order = orders.find(o => o.id === orderId);
       if (!order) return;
-
       if (!window.confirm("Confirmar finalização deste pacote?")) return;
 
       try {
@@ -341,21 +354,8 @@ export default function App() {
 
           setOrders(prev => prev.map(o => o.id === order.id ? updatedOrder : o));
       } catch (error) {
-          console.error("Error finishing split:", error);
           alert("Erro ao finalizar pacote.");
       }
-  };
-
-  const handleGenerateInsights = async () => {
-    setLoadingAi(true);
-    try {
-      const insights = await generateProductionInsights(orders, seamstresses);
-      setAiInsights(insights);
-    } catch (error) {
-      console.error("Error generating insights:", error);
-    } finally {
-      setLoadingAi(false);
-    }
   };
 
   const handleSaveSeamstress = async (seamstress: Omit<Seamstress, 'id'> | Seamstress) => {
@@ -386,7 +386,7 @@ export default function App() {
             .order-header { font-weight: bold; font-size: 10pt; border-bottom: 1px solid #ccc; margin-bottom: 5px; display: flex; justify-content: space-between; }
             .order-info { font-size: 9pt; margin-bottom: 4px; }
             .items-list { margin-top: 4px; }
-            .item-line { margin-bottom: 2px; display: flex; align-items: center; }
+            .item-line { margin-bottom: 4px; display: flex; align-items: center; }
             .spacer { flex: 1; }
             .total-info { font-size: 7pt; text-align: right; margin-top: 5px; font-weight: bold; }
           </style>
@@ -409,7 +409,7 @@ export default function App() {
           <div class="items-list">
       `;
       o.items.forEach(item => {
-        content += `<div class="item-line">Cor: <strong>${item.color}</strong> &nbsp;&nbsp;&nbsp; Rolos: <strong>${item.rollsUsed}</strong> - <div class="spacer"></div></div>`;
+        content += `<div class="item-line">Cor: <strong>${item.color}</strong> &nbsp;&nbsp;&nbsp; Rolos: <strong>${item.rollsUsed}</strong> - &nbsp;&nbsp;&nbsp; </div>`;
       });
       content += `
           </div>
@@ -447,14 +447,25 @@ export default function App() {
       const inProgress = allSplits.filter(sp => sp.status === OrderStatus.SEWING);
       const finished = allSplits.filter(sp => sp.status === OrderStatus.FINISHED);
       const recent = [...allSplits].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 3);
-      return { ...s, inProgressCount: inProgress.length, finishedCount: finished.length, recentWorks: recent };
+      
+      let status: 'Costurando' | 'Parada' | 'Inativa' = 'Parada';
+      if (!s.active) status = 'Inativa';
+      else if (inProgress.length > 0) status = 'Costurando';
+
+      return { 
+        ...s, 
+        inProgressCount: inProgress.length, 
+        finishedCount: finished.length, 
+        recentWorks: recent,
+        statusLabel: status
+      };
     });
   }, [seamstresses, orders]);
 
   const uniqueFabricNames = useMemo(() => Array.from(new Set(fabrics.map(f => f.name))).sort(), [fabrics]);
   const uniqueSeamstressNames = useMemo(() => Array.from(new Set(seamstresses.map(s => s.name))).sort(), [seamstresses]);
 
-  if (isLoading) return (<div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" /><h2 className="text-xl font-bold text-slate-700">Conectando...</h2></div></div>);
+  if (isLoading) return (<div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" /><h2 className="text-xl font-bold text-slate-700">Conectando ao Banco...</h2></div></div>);
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden">
@@ -472,7 +483,7 @@ export default function App() {
 
       <main className="flex-1 overflow-y-auto relative">
         <header className="sticky top-0 bg-white/80 backdrop-blur-md z-10 border-b border-slate-200 px-8 py-4 flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-slate-800">{activeTab === 'dashboard' && 'Visão Geral'}{activeTab === 'production' && 'Gerenciamento de Produção'}{activeTab === 'reports' && 'Relatórios Detalhados'}{activeTab === 'products' && 'Catálogo de Produtos'}{activeTab === 'seamstresses' && 'Equipe de Costura'}{activeTab === 'fabrics' && 'Controle de Tecidos'}</h2>
+          <h2 className="text-2xl font-bold text-slate-800 uppercase tracking-tight">{activeTab === 'dashboard' && 'Visão Geral'}{activeTab === 'production' && 'Gerenciamento de Produção'}{activeTab === 'reports' && 'Relatórios'}{activeTab === 'products' && 'Catálogo de Produtos'}{activeTab === 'seamstresses' && 'Costureiras'}{activeTab === 'fabrics' && 'Controle de Tecidos'}</h2>
           <div className="flex items-center gap-4">
             {activeTab === 'production' && (<><div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} /><input type="text" placeholder="Buscar ordem..." className="pl-10 pr-4 py-2 rounded-full border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none w-64 transition-all" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} /></div>{productionStage === OrderStatus.PLANNED && (<button onClick={handlePrintPlannedOrders} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-full font-medium flex items-center gap-2 transition-all active:scale-95 border border-slate-300"><Printer size={18} /> Imprimir PDF</button>)}<button onClick={() => { setOrderToEdit(null); setIsOrderModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Ordem</button></>)}
              {activeTab === 'seamstresses' && (<button onClick={() => { setSeamstressToEdit(null); setIsSeamstressModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Costureira</button>)}
@@ -484,76 +495,177 @@ export default function App() {
             <div className="space-y-8 animate-in fade-in duration-500">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard title="Pedidos Planejados" value={dashboardMetrics.plannedOrdersCount} icon={ClipboardList} color="bg-blue-500" trend="Aguardando Corte" />
-                <StatCard title="Costureiras Ativas" value={dashboardMetrics.activeSeamstressesCount} icon={Users} color="bg-pink-500" trend="Costurando agora" />
-                <StatCard title="Produzido (Mês)" value={dashboardMetrics.monthPiecesProduced} icon={CalendarDays} color="bg-indigo-500" trend="Peças finalizadas" />
-                <StatCard title="Em Corte (Ativo)" value={dashboardMetrics.cuttingOrders} icon={Scissors} color="bg-purple-500" trend="Aguardando distribuição" />
+                <StatCard title="Em Corte (Ativo)" value={dashboardMetrics.cuttingOrders} icon={Scissors} color="bg-purple-500" trend="Em andamento" />
+                <StatCard title="Costureiras Ativas" value={seamstressData.filter(s => s.statusLabel === 'Costurando').length} icon={Shirt} color="bg-pink-500" trend="Trabalhando agora" />
+                <StatCard title="Total de Ordens" value={orders.length} icon={Layers} color="bg-indigo-500" trend="No sistema" />
               </div>
 
-              <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2"><TrendingUp className="text-indigo-600"/> Insights de Produção (IA)</h3>
-                  <button 
-                    onClick={handleGenerateInsights} 
-                    disabled={loadingAi}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg disabled:opacity-50"
-                  >
-                    {loadingAi ? <Loader2 size={18} className="animate-spin"/> : <Scroll size={18}/>}
-                    Gerar Análise
-                  </button>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                   <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2"><CalendarDays size={20} className="text-indigo-600"/> Produção Semanal (7 Dias)</h3>
+                   <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={dashboardMetrics.weeklyData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                        <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
+                        <Bar dataKey="pecas" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                   </div>
                 </div>
-                {aiInsights && (
-                  <div className="bg-indigo-50 p-6 rounded-2xl border border-indigo-100 text-slate-700 leading-relaxed whitespace-pre-wrap animate-in slide-in-from-top-4">
-                    {aiInsights}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                   <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2"><CalendarDays size={20} className="text-purple-600"/> Produção Mensal</h3>
+                   <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={dashboardMetrics.monthlyData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                        <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
+                        <Line type="monotone" dataKey="pecas" stroke="#8b5cf6" strokeWidth={3} dot={{r: 6, fill: '#8b5cf6', strokeWidth: 2, stroke: '#fff'}} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                   </div>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                  <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2"><Users size={20} className="text-pink-600"/> Status das Costureiras</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {seamstressData.map(s => (
+                      <div key={s.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-3 h-3 rounded-full ${s.statusLabel === 'Costurando' ? 'bg-emerald-500 animate-pulse' : s.statusLabel === 'Parada' ? 'bg-amber-400' : 'bg-slate-300'}`}></div>
+                          <span className="font-bold text-slate-700">{s.name}</span>
+                        </div>
+                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${s.statusLabel === 'Costurando' ? 'bg-emerald-100 text-emerald-700' : s.statusLabel === 'Parada' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-500'}`}>
+                          {s.statusLabel}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                )}
-                {!aiInsights && !loadingAi && (
-                  <div className="py-12 text-center text-slate-400 italic bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                    Clique em "Gerar Análise" para receber insights da nossa IA sobre sua produção.
-                  </div>
-                )}
               </div>
             </div>
           )}
 
-          {activeTab === 'reports' && (<div className="space-y-6 animate-in fade-in duration-500"><div className="grid grid-cols-1 md:grid-cols-4 gap-4"><div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Total Cortado (Filtro)</p><p className="text-2xl font-bold text-indigo-600">{reportMetrics.totalCut}</p></div><div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Total Costurado (Filtro)</p><p className="text-2xl font-bold text-emerald-600">{reportMetrics.totalSewn}</p></div><div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Total de Rolos</p><p className="text-2xl font-bold text-amber-600">{reportMetrics.totalRolls.toFixed(1)}</p></div><div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Registros Encontrados</p><p className="text-2xl font-bold text-slate-700">{reportMetrics.count}</p></div></div><div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm"><div className="flex flex-wrap gap-4 mb-6"><div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Início</label><input type="date" className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.startDate} onChange={e => setReportFilters({...reportFilters, startDate: e.target.value})}/></div><div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Fim</label><input type="date" className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.endDate} onChange={e => setReportFilters({...reportFilters, endDate: e.target.value})}/></div><div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Tecido</label><select className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.fabric} onChange={e => setReportFilters({...reportFilters, fabric: e.target.value})}><option value="">Todos os Tecidos</option>{uniqueFabricNames.map(f => <option key={f} value={f}>{f}</option>)}</select></div><div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Costureira</label><select className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-indigo-100 outline-none" value={reportFilters.seamstress} onChange={e => setReportFilters({...reportFilters, seamstress: e.target.value})}><option value="">Todas as Costureiras</option>{uniqueSeamstressNames.map(s => <option key={s} value={s}>{s}</option>)}</select></div><button onClick={() => setReportFilters({startDate: '', endDate: '', fabric: '', seamstress: ''})} className="mt-5 text-slate-400 hover:text-red-500 transition-colors" title="Limpar Filtros"><Trash2 size={20}/></button></div><div className="overflow-x-auto"><table className="w-full text-left text-xs uppercase font-bold text-slate-500 border-collapse"><thead><tr className="bg-slate-50 border-b border-slate-200"><th className="p-4">ID</th><th className="p-4">Data Pedido</th><th className="p-4">Ref / Descrição</th><th className="p-4">Status</th><th className="p-4">Qtd Corte</th><th className="p-4">Data Entrega</th><th className="p-4">Observações</th><th className="p-4">Histórico Costura</th></tr></thead><tbody className="divide-y divide-slate-100 font-normal text-slate-700 normal-case">{reportFilteredOrders.length === 0 ? (<tr><td colSpan={8} className="p-12 text-center text-slate-400 italic">Nenhum registro encontrado para estes filtros.</td></tr>) : (reportFilteredOrders.map(o => (<tr key={o.id} className="hover:bg-slate-50 transition-colors"><td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td><td className="p-4">{new Date(o.createdAt).toLocaleDateString('pt-BR')}</td><td className="p-4"><div className="font-bold">{o.referenceCode}</div><div className="text-[10px] text-slate-400">{o.description}</div></td><td className="p-4"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{o.status}</span></td><td className="p-4 font-bold">{o.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0)}</td><td className="p-4">{o.finishedAt ? new Date(o.finishedAt).toLocaleDateString('pt-BR') : '-'}</td><td className="p-4 text-[10px] text-slate-500 max-w-[150px] truncate" title={o.notes}>{o.notes || '-'}</td><td className="p-4 text-[10px]">{(o.splits || []).map(s => `${s.seamstressName} (${s.status === OrderStatus.FINISHED ? 'FEITO' : 'FAZENDO'})`).join(', ') || '-'}</td></tr>)))}</tbody></table></div></div></div>)}
-
-          {activeTab === 'seamstresses' && (<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">{seamstressData.map(s => (
-            <div key={s.id} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col relative group hover:shadow-md transition-all">
-              <button onClick={() => { setSeamstressToEdit(s); setIsSeamstressModalOpen(true); }} className="absolute top-4 right-4 text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 size={18} /></button>
-              <div className="flex items-start gap-4 mb-4">
-                <div className="w-14 h-14 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl font-bold shadow-inner">{s.name.charAt(0)}</div>
-                <div className="flex-1">
-                  <h3 className="font-bold text-slate-800 text-lg">{s.name}</h3>
-                  <div className="text-xs text-slate-500 space-y-0.5 mt-1">
-                    <p className="font-medium text-indigo-600 uppercase tracking-tighter">{s.specialty}</p>
-                    <p className="flex items-center gap-1"><Phone size={10} className="text-slate-400"/> {s.phone}</p>
-                    <p className="flex items-center gap-1"><MapPin size={10} className="text-slate-400"/> {s.city || 'Cidade não inf.'}</p>
-                  </div>
+          {activeTab === 'reports' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
+                  <p className="text-2xl font-bold text-indigo-600">{reportMetrics.totalCut}</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold">Total Cortado (Filtro)</p>
                 </div>
-                <div className={`w-3 h-3 rounded-full mt-2 ${s.active ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
+                  <p className="text-2xl font-bold text-emerald-600">{reportMetrics.totalSewn}</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold">Total Costurado (Filtro)</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
+                  <p className="text-2xl font-bold text-amber-600">{reportMetrics.totalRolls.toFixed(1)}</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold">Total de Rolos</p>
+                </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
+                  <p className="text-2xl font-bold text-slate-700">{reportMetrics.count}</p>
+                  <p className="text-[10px] text-slate-500 uppercase font-bold">Registros Encontrados</p>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-3 mb-5">
-                <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 text-center"><p className="text-2xl font-bold text-amber-700">{s.inProgressCount}</p><p className="text-[10px] text-amber-600 font-bold uppercase">Em Andamento</p></div>
-                <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100 text-center"><p className="text-2xl font-bold text-emerald-700">{s.finishedCount}</p><p className="text-[10px] text-emerald-600 font-bold uppercase">Finalizados</p></div>
-              </div>
-              <div className="mt-auto pt-4 border-t border-slate-50">
-                <p className="text-[10px] text-slate-400 font-bold uppercase mb-3 tracking-widest">Trabalhos Recentes</p>
-                <div className="space-y-2">
-                  {s.recentWorks.length > 0 ? s.recentWorks.map((w, idx) => (
-                    <div key={idx} className="flex justify-between items-center text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-100 hover:bg-white transition-colors">
-                      <div className="flex-1">
-                        <p className="font-bold text-slate-700">{w.refCode}</p>
-                        <p className="text-[10px] text-slate-500 truncate max-w-[120px]">{w.items.map(i => i.color).join(', ')}</p>
-                      </div>
-                      <div className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${w.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {w.status === OrderStatus.FINISHED ? 'Feito' : 'Fazendo'}
-                      </div>
-                    </div>
-                  )) : <p className="text-xs text-slate-400 italic text-center py-2">Nenhum serviço registrado</p>}
+
+              <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+                <div className="flex flex-wrap gap-4 mb-6">
+                  <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Início</label><input type="date" className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.startDate} onChange={e => setReportFilters({...reportFilters, startDate: e.target.value})}/></div>
+                  <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Fim</label><input type="date" className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.endDate} onChange={e => setReportFilters({...reportFilters, endDate: e.target.value})}/></div>
+                  <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Tecido</label><select className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.fabric} onChange={e => setReportFilters({...reportFilters, fabric: e.target.value})}><option value="">Tecido</option>{uniqueFabricNames.map(f => <option key={f} value={f}>{f}</option>)}</select></div>
+                  <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Costureira</label><select className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.seamstress} onChange={e => setReportFilters({...reportFilters, seamstress: e.target.value})}><option value="">Costureira</option>{uniqueSeamstressNames.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                  <button onClick={() => setReportFilters({startDate: '', endDate: '', fabric: '', seamstress: ''})} className="mt-5 text-slate-400 hover:text-red-500"><Trash2 size={20}/></button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[11px] uppercase font-bold text-slate-500 border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="p-4">ID</th>
+                        <th className="p-4">Data Pedido</th>
+                        <th className="p-4">Ref / Descrição</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4">Qtd Corte</th>
+                        <th className="p-4">Data Entrega</th>
+                        <th className="p-4">Observações</th>
+                        <th className="p-4">Histórico de Costura</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-normal text-slate-700 normal-case">
+                      {reportFilteredOrders.length === 0 ? (
+                        <tr><td colSpan={8} className="p-12 text-center text-slate-400 italic">Nenhum registro para estes filtros.</td></tr>
+                      ) : (
+                        reportFilteredOrders.map(o => (
+                          <tr key={o.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td>
+                            <td className="p-4">{new Date(o.createdAt).toLocaleDateString('pt-BR')}</td>
+                            <td className="p-4"><div className="font-bold">{o.referenceCode}</div><div className="text-[10px] text-slate-400">{o.description}</div></td>
+                            <td className="p-4"><span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{o.status}</span></td>
+                            <td className="p-4 font-bold">{o.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0)}</td>
+                            <td className="p-4">{o.finishedAt ? new Date(o.finishedAt).toLocaleDateString('pt-BR') : '-'}</td>
+                            <td className="p-4 text-[10px] text-slate-500">{o.notes || '-'}</td>
+                            <td className="p-4 text-[10px]">{(o.splits || []).map(s => `${s.seamstressName} (${s.status === OrderStatus.FINISHED ? 'Feito' : 'Fazendo'})`).join(', ') || '-'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
-          ))}</div>)}
+          )}
+
+          {activeTab === 'seamstresses' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
+              {seamstressData.map(s => (
+                <div key={s.id} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col relative group hover:shadow-md transition-all">
+                  <button onClick={() => { setSeamstressToEdit(s); setIsSeamstressModalOpen(true); }} className="absolute top-4 right-4 text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100"><Edit2 size={18} /></button>
+                  <div className="flex items-start gap-4 mb-6">
+                    <div className="w-14 h-14 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl font-bold shadow-inner">{s.name.charAt(0)}</div>
+                    <div className="flex-1">
+                      <h3 className="font-bold text-slate-800 text-lg">{s.name}</h3>
+                      <div className="text-xs text-slate-500 space-y-1 mt-1">
+                        <p className="font-bold text-indigo-600 uppercase tracking-tighter">{s.specialty}</p>
+                        <p className="flex items-center gap-1"><Phone size={10} className="text-slate-400"/> {s.phone}</p>
+                        <p className="flex items-center gap-1"><MapPin size={10} className="text-slate-400"/> {s.city || 'Não inf.'}</p>
+                      </div>
+                    </div>
+                    <div className={`w-3 h-3 rounded-full mt-2 ${s.active ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-amber-600">{s.inProgressCount}</p>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase">Em Andamento</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-emerald-600">{s.finishedCount}</p>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase">Finalizados</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-auto pt-4 border-t border-slate-50">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-3 tracking-widest">Trabalhos Recentes</p>
+                    <div className="space-y-2">
+                      {s.recentWorks.length > 0 ? s.recentWorks.map((w, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <div className="flex-1">
+                            <p className="font-bold text-slate-700">{w.refCode}</p>
+                            <p className="text-[10px] text-slate-500">{w.items.map(i => i.color).join(', ')}</p>
+                          </div>
+                          <div className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${w.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                            {w.status === OrderStatus.FINISHED ? 'Feito' : 'Fazendo'}
+                          </div>
+                        </div>
+                      )) : <p className="text-xs text-slate-400 italic text-center py-2">Sem histórico</p>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {activeTab === 'production' && (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px] animate-in fade-in duration-500">
@@ -576,7 +688,7 @@ export default function App() {
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold">
                       <th className="p-4 w-10"></th>
-                      <th className="p-4">Pedido / Data</th>
+                      <th className="p-4">Pedido</th>
                       <th className="p-4">Ref / Descrição</th>
                       <th className="p-4">Tecido</th>
                       <th className="p-4 text-center">Peças</th>
@@ -588,7 +700,7 @@ export default function App() {
                       const isExpanded = expandedOrders.includes(order.id); 
                       return (
                         <React.Fragment key={order.id}>
-                          <tr className={`hover:bg-slate-50 transition-colors cursor-pointer ${isExpanded ? 'bg-slate-50/50' : ''}`} onClick={() => setExpandedOrders(prev => prev.includes(order.id) ? prev.filter(id => id !== order.id) : [...prev, order.id])}>
+                          <tr className={`hover:bg-slate-50 cursor-pointer ${isExpanded ? 'bg-slate-50/50' : ''}`} onClick={() => setExpandedOrders(prev => prev.includes(order.id) ? prev.filter(id => id !== order.id) : [...prev, order.id])}>
                             <td className="p-4 text-center">
                               <button className="text-slate-400">{isExpanded ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>
                             </td>
@@ -609,12 +721,12 @@ export default function App() {
                                 {order.status === OrderStatus.PLANNED && (
                                   <>
                                     <button onClick={() => { setOrderToEdit(order); setIsOrderModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1"><Edit2 size={16} /></button>
-                                    <button onClick={() => initiateMoveToCutting(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-md transition-all active:scale-95">Iniciar</button>
+                                    <button onClick={() => initiateMoveToCutting(order)} className="bg-indigo-600 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-md">Iniciar</button>
                                     <button onClick={() => handleDeleteOrder(order.id)} className="text-slate-400 hover:text-red-500 p-1"><Trash2 size={16} /></button>
                                   </>
                                 )}
                                 {order.status === OrderStatus.CUTTING && (
-                                  <button onClick={() => initiateDistribution(order)} className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-md transition-all active:scale-95">Distribuir</button>
+                                  <button onClick={() => initiateDistribution(order)} className="bg-amber-500 text-white px-3 py-1 rounded-lg text-xs font-bold shadow-md">Distribuir</button>
                                 )}
                               </div>
                             </td>
@@ -624,11 +736,8 @@ export default function App() {
                               <td colSpan={6} className="p-0 border-b border-slate-200">
                                 <div className="bg-slate-50 p-6 animate-in slide-in-from-top-2">
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                    {/* Detailed items */}
                                     <div>
-                                      <h4 className="text-xs font-bold text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2">
-                                        <Scroll size={14}/> Detalhes do Corte / Estoque Disponível
-                                      </h4>
+                                      <h4 className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-2"><Scissors size={14}/> Detalhes do Corte</h4>
                                       <div className="space-y-2">
                                         {(order.status === OrderStatus.PLANNED ? order.items : order.activeCuttingItems).map((item, idx) => (
                                           <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
@@ -652,12 +761,8 @@ export default function App() {
                                         ))}
                                       </div>
                                     </div>
-
-                                    {/* Splits (if any) */}
                                     <div>
-                                      <h4 className="text-xs font-bold text-slate-400 uppercase mb-3 tracking-widest flex items-center gap-2">
-                                        <Shirt size={14}/> Distribuição para Costura
-                                      </h4>
+                                      <h4 className="text-xs font-bold text-slate-400 uppercase mb-3 flex items-center gap-2"><Shirt size={14}/> Distribuição</h4>
                                       <div className="space-y-2">
                                         {order.splits && order.splits.length > 0 ? order.splits.map((split) => (
                                           <div key={split.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
@@ -671,9 +776,7 @@ export default function App() {
                                                   {split.status}
                                                 </span>
                                                 {split.status === OrderStatus.SEWING && (
-                                                  <button onClick={() => handleFinishSplit(order.id, split.id)} className="text-emerald-500 hover:text-emerald-700 transition-colors" title="Finalizar este pacote">
-                                                    <CheckCircle2 size={18}/>
-                                                  </button>
+                                                  <button onClick={() => handleFinishSplit(order.id, split.id)} className="text-emerald-500 hover:text-emerald-700"><CheckCircle2 size={18}/></button>
                                                 )}
                                               </div>
                                             </div>
@@ -687,20 +790,10 @@ export default function App() {
                                               ))}
                                             </div>
                                           </div>
-                                        )) : (
-                                          <div className="text-sm text-slate-400 italic text-center py-8 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
-                                            Nenhuma distribuição realizada ainda.
-                                          </div>
-                                        )}
+                                        )) : <p className="text-xs text-slate-400 italic text-center py-4 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">Sem distribuição.</p>}
                                       </div>
                                     </div>
                                   </div>
-                                  {order.notes && (
-                                    <div className="mt-6 pt-4 border-t border-slate-200">
-                                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Observações:</p>
-                                      <p className="text-sm text-slate-600 italic">{order.notes}</p>
-                                    </div>
-                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -716,30 +809,16 @@ export default function App() {
 
           {activeTab === 'fabrics' && (<div className="space-y-6 animate-in fade-in duration-500"><div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex gap-4 items-center flex-wrap"><div className="flex-1 min-w-[200px]"><label className="block text-xs font-bold text-slate-500 mb-1">Buscar Tecido</label><input type="text" placeholder="Filtrar por nome..." className="w-full px-4 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none" value={fabricFilters.name} onChange={e => setFabricFilters({...fabricFilters, name: e.target.value})}/></div><button onClick={() => { setFabricToEdit(null); setIsFabricModalOpen(true); }} className="bg-indigo-600 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg"><Plus size={18} /> Novo Tecido</button></div><div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">{fabrics.filter(f => f.name.toLowerCase().includes(fabricFilters.name.toLowerCase())).map(fabric => (<div key={fabric.id} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm relative group hover:shadow-md transition-all"><div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => { setFabricToEdit(fabric); setIsFabricModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1 bg-white rounded shadow-sm"><Edit2 size={16}/></button></div><div className="flex items-center gap-3 mb-4"><div className="w-10 h-10 rounded-full border border-slate-100 shadow-inner" style={{backgroundColor: fabric.colorHex}}></div><div><h3 className="font-bold text-slate-800">{fabric.name}</h3><p className="text-xs text-slate-500">{fabric.color}</p></div></div><div className="bg-slate-50 rounded-xl p-3 text-center"><p className="text-xs text-slate-400 uppercase font-bold mb-1">Estoque</p><p className={`text-2xl font-bold ${fabric.stockRolls < 5 ? 'text-red-500' : 'text-indigo-600'}`}>{fabric.stockRolls} <span className="text-sm font-normal text-slate-400">rolos</span></p></div></div>))}</div></div>)}
 
-          {activeTab === 'products' && (<div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in fade-in duration-500"><table className="w-full text-left border-collapse"><thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4">Código</th><th className="p-4">Descrição</th><th className="p-4">Tecido Padrão</th><th className="p-4">Grade</th><th className="p-4 text-right">Ações</th></tr></thead><tbody className="divide-y divide-slate-100 text-sm text-slate-700">{references.map(ref => (<tr key={ref.id} className="hover:bg-slate-50"><td className="p-4 font-bold text-indigo-900">{ref.code}</td><td className="p-4">{ref.description}</td><td className="p-4">{ref.defaultFabric}</td><td className="p-4"><span className="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-600">{ref.defaultGrid}</span></td><td className="p-4 text-right"><div className="flex justify-end gap-2"><button onClick={() => { setEditingProduct(ref); setIsProductModalOpen(true); }} className="text-indigo-400 hover:text-indigo-600 p-2"><Edit2 size={16} /></button><button onClick={async () => { if(window.confirm("Excluir produto?")) { await apiFetch(`products/${ref.id}`, { method: 'DELETE' }); fetchData(); } }} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={16} /></button></div></td></tr>))}</tbody></table></div>)}
+          {activeTab === 'products' && (<div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in fade-in duration-500"><table className="w-full text-left border-collapse"><thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4">Código</th><th className="p-4">Descrição</th><th className="p-4">Tecido Padrão</th><th className="p-4 text-right">Ações</th></tr></thead><tbody className="divide-y divide-slate-100 text-sm text-slate-700">{references.map(ref => (<tr key={ref.id} className="hover:bg-slate-50"><td className="p-4 font-bold text-indigo-900">{ref.code}</td><td className="p-4">{ref.description}</td><td className="p-4">{ref.defaultFabric}</td><td className="p-4 text-right"><div className="flex justify-end gap-2"><button onClick={() => { setEditingProduct(ref); setIsProductModalOpen(true); }} className="text-indigo-400 hover:text-indigo-600 p-2"><Edit2 size={16} /></button><button onClick={async () => { if(window.confirm("Excluir produto?")) { await apiFetch(`products/${ref.id}`, { method: 'DELETE' }); fetchData(); } }} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={16} /></button></div></td></tr>))}</tbody></table></div>)}
         </div>
       </main>
 
-      {/* Modals */}
       <OrderModal isOpen={isOrderModalOpen} onClose={() => setIsOrderModalOpen(false)} onSave={handleCreateOrder} references={references} orderToEdit={orderToEdit} suggestedId={nextOrderId}/>
       <SeamstressModal isOpen={isSeamstressModalOpen} onClose={() => setIsSeamstressModalOpen(false)} onSave={handleSaveSeamstress} seamstressToEdit={seamstressToEdit}/>
       <ProductModal isOpen={isProductModalOpen} onClose={() => setIsProductModalOpen(false)} onSave={() => { setIsProductModalOpen(false); fetchData(); }} productToEdit={editingProduct} fabrics={fabrics}/>
       <FabricModal isOpen={isFabricModalOpen} onClose={() => setIsFabricModalOpen(false)} onSave={() => { setIsFabricModalOpen(false); fetchData(); }} fabricToEdit={fabricToEdit}/>
-      
-      {/* Missing flow modals added here */}
-      <CutConfirmationModal 
-        isOpen={!!cuttingOrder} 
-        onClose={() => setCuttingOrder(null)} 
-        order={cuttingOrder} 
-        onConfirm={handleConfirmCut} 
-      />
-      <DistributeModal 
-        isOpen={!!distributingOrder} 
-        onClose={() => setDistributingOrder(null)} 
-        order={distributingOrder} 
-        seamstresses={seamstresses} 
-        onDistribute={handleDistribute} 
-      />
+      <CutConfirmationModal isOpen={!!cuttingOrder} onClose={() => setCuttingOrder(null)} order={cuttingOrder} onConfirm={handleConfirmCut} />
+      <DistributeModal isOpen={!!distributingOrder} onClose={() => setDistributingOrder(null)} order={distributingOrder} seamstresses={seamstresses} onDistribute={handleDistribute} />
     </div>
   );
 }
