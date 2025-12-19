@@ -121,16 +121,16 @@ export default function App() {
     setIsLoading(true);
     try {
       const [productsData, seamstressesData, ordersData, fabricsData] = await Promise.all([
-        apiFetch('products').catch(() => []),
-        apiFetch('seamstresses').catch(() => []),
-        apiFetch('orders').catch(() => []),
-        apiFetch('fabrics').catch(() => [])
+        apiFetch('products'),
+        apiFetch('seamstresses'),
+        apiFetch('orders'),
+        apiFetch('fabrics')
       ]);
 
-      setReferences(Array.isArray(productsData) ? productsData : []);
-      setSeamstresses(Array.isArray(seamstressesData) ? seamstressesData : []);
-      setOrders(Array.isArray(ordersData) ? ordersData : []);
-      setFabrics(Array.isArray(fabricsData) ? fabricsData : []);
+      if (Array.isArray(productsData)) setReferences(productsData);
+      if (Array.isArray(seamstressesData)) setSeamstresses(seamstressesData);
+      if (Array.isArray(ordersData)) setOrders(ordersData);
+      if (Array.isArray(fabricsData)) setFabrics(fabricsData);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -213,19 +213,6 @@ export default function App() {
     }
   };
 
-  const handleSaveSeamstress = async (seamstress: Omit<Seamstress, 'id'> | Seamstress) => {
-      try {
-          if ('id' in seamstress) {
-              await apiFetch(`seamstresses/${seamstress.id}`, { method: 'PUT', body: JSON.stringify(seamstress) });
-              setSeamstresses(prev => prev.map(s => s.id === seamstress.id ? seamstress as Seamstress : s));
-          } else {
-              const id = Date.now().toString();
-              const saved = await apiFetch('seamstresses', { method: 'POST', body: JSON.stringify({...seamstress, id}) });
-              setSeamstresses(prev => [...prev, saved]);
-          }
-      } catch (error) { console.error("Error saving seamstress:", error); }
-  };
-
   const handleDeleteOrder = async (id: string) => {
       if (window.confirm("Tem certeza que deseja excluir esta ordem?")) {
           try {
@@ -301,6 +288,19 @@ export default function App() {
       } catch (error) { alert("Erro ao finalizar pacote."); }
   };
 
+  const handleSaveSeamstress = async (seamstress: Omit<Seamstress, 'id'> | Seamstress) => {
+      try {
+          if ('id' in seamstress) {
+              await apiFetch(`seamstresses/${seamstress.id}`, { method: 'PUT', body: JSON.stringify(seamstress) });
+              setSeamstresses(prev => prev.map(s => s.id === seamstress.id ? seamstress as Seamstress : s));
+          } else {
+              const id = Date.now().toString();
+              const saved = await apiFetch('seamstresses', { method: 'POST', body: JSON.stringify({...seamstress, id}) });
+              setSeamstresses(prev => [...prev, saved]);
+          }
+      } catch (error) { console.error("Error saving seamstress:", error); }
+  };
+
   const handlePrintPlannedOrders = () => {
     const plannedOrders = orders.filter(o => o.status === OrderStatus.PLANNED);
     if (plannedOrders.length === 0) return alert("Não há pedidos planejados para imprimir.");
@@ -351,7 +351,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
-      {/* Sidebar - Mantendo ordem e cores originais */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-indigo-950 text-white flex flex-col shadow-xl transition-transform duration-300 lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-8 flex items-center justify-between">
           <div><h1 className="text-3xl font-bold tracking-tighter bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Kavin's</h1><p className="text-[10px] text-indigo-300 mt-1 uppercase tracking-widest font-bold">Produção</p></div>
@@ -408,7 +407,7 @@ export default function App() {
                       <button 
                         title="Adicionar entrada de tecido"
                         onClick={() => { setFabricToEdit(fabric); setFabricEntryMode(true); setIsFabricModalOpen(true); }} 
-                        className="text-blue-600 hover:bg-blue-50 p-1.5 bg-white rounded-lg shadow-sm border border-slate-200"
+                        className="text-indigo-600 hover:bg-indigo-50 p-1.5 bg-white rounded-lg shadow-sm border border-slate-200"
                       >
                         <Plus size={16}/>
                       </button>
@@ -473,29 +472,18 @@ export default function App() {
         </div>
       </main>
 
-      {/* Modals */}
       <OrderModal isOpen={isOrderModalOpen} onClose={() => setIsOrderModalOpen(false)} onSave={handleCreateOrder} references={references} orderToEdit={orderToEdit} suggestedId={nextOrderId}/>
       <SeamstressModal isOpen={isSeamstressModalOpen} onClose={() => setIsSeamstressModalOpen(false)} onSave={handleSaveSeamstress} seamstressToEdit={seamstressToEdit}/>
       <ProductModal isOpen={isProductModalOpen} onClose={() => setIsProductModalOpen(false)} onSave={handleSaveProduct} productToEdit={editingProduct} fabrics={fabrics}/>
-      <FabricModal 
-          isOpen={isFabricModalOpen} 
-          onClose={() => setIsFabricModalOpen(false)} 
-          entryMode={fabricEntryMode}
-          onSave={async (f) => { 
-              try {
-                if ('id' in f) await apiFetch(`fabrics/${f.id}`, { method: 'PATCH', body: JSON.stringify(f) });
-                else {
-                    const id = Date.now().toString();
-                    await apiFetch('fabrics', { method: 'POST', body: JSON.stringify({ ...f, id }) });
-                }
-                fetchData(); 
-                setIsFabricModalOpen(false);
-              } catch (e) {
-                alert("Erro ao salvar tecido.");
-              }
-          }} 
-          fabricToEdit={fabricToEdit}
-      />
+      <FabricModal isOpen={isFabricModalOpen} onClose={() => setIsFabricModalOpen(false)} entryMode={fabricEntryMode} onSave={async (f) => { 
+          if ('id' in f) await apiFetch(`fabrics/${f.id}`, { method: 'PATCH', body: JSON.stringify(f) });
+          else {
+            const id = Date.now().toString();
+            await apiFetch('fabrics', { method: 'POST', body: JSON.stringify({ ...f, id }) });
+          }
+          fetchData(); 
+          setIsFabricModalOpen(false);
+      }} fabricToEdit={fabricToEdit}/>
       <CutConfirmationModal isOpen={!!cuttingOrder} onClose={() => setCuttingOrder(null)} order={cuttingOrder} onConfirm={handleConfirmCut} />
       <DistributeModal isOpen={!!distributingOrder} onClose={() => setDistributingOrder(null)} order={distributingOrder} seamstresses={seamstresses} onDistribute={handleDistribute} />
       
