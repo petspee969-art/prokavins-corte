@@ -32,6 +32,18 @@ const parseJsonField = (field) => {
   return field;
 };
 
+// Converte ISO Date (JS) para formato MySQL DATETIME (YYYY-MM-DD HH:MM:SS)
+const toSqlDate = (isoString) => {
+  if (!isoString) return null;
+  try {
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return null;
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+  } catch (e) {
+    return null;
+  }
+};
+
 async function connectDB() {
   try {
     pool = mysql.createPool(dbConfig);
@@ -147,8 +159,12 @@ app.put('/api/products/:id', async (req, res) => {
 });
 
 app.delete('/api/products/:id', async (req, res) => {
-  await pool.query('DELETE FROM products WHERE id = ?', [req.params.id]);
-  res.json({ success: true });
+  try {
+    await pool.query('DELETE FROM products WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // --- ROTAS ORDENS ---
@@ -172,7 +188,7 @@ app.post('/api/orders', async (req, res) => {
     const o = req.body;
     await pool.query(
       'INSERT INTO orders (id, referenceId, referenceCode, description, fabric, items, activeCuttingItems, splits, gridType, status, notes, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [o.id, o.referenceId, o.referenceCode, o.description, o.fabric, JSON.stringify(o.items), JSON.stringify(o.activeCuttingItems), JSON.stringify(o.splits), o.gridType, o.status, o.notes, o.createdAt, o.updatedAt]
+      [o.id, o.referenceId, o.referenceCode, o.description, o.fabric, JSON.stringify(o.items), JSON.stringify(o.activeCuttingItems), JSON.stringify(o.splits), o.gridType, o.status, o.notes, toSqlDate(o.createdAt), toSqlDate(o.updatedAt)]
     );
     res.json(o);
   } catch (error) {
@@ -189,7 +205,13 @@ app.patch('/api/orders/:id', async (req, res) => {
     
     for (const [key, value] of Object.entries(updates)) {
       queryParts.push(`${key} = ?`);
-      values.push(typeof value === 'object' && value !== null ? JSON.stringify(value) : value);
+      if (typeof value === 'object' && value !== null) {
+        values.push(JSON.stringify(value));
+      } else if (key === 'createdAt' || key === 'updatedAt' || key === 'finishedAt') {
+        values.push(toSqlDate(value));
+      } else {
+        values.push(value);
+      }
     }
 
     await pool.query(`UPDATE orders SET ${queryParts.join(', ')} WHERE id = ?`, [...values, id]);
@@ -208,36 +230,106 @@ app.patch('/api/orders/:id', async (req, res) => {
 
 // --- TECIDOS ---
 app.get('/api/fabrics', async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM fabrics');
-  res.json(rows);
+  try {
+    const [rows] = await pool.query('SELECT * FROM fabrics ORDER BY name ASC');
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.post('/api/fabrics', async (req, res) => {
-  const f = req.body;
-  const id = f.id || Date.now().toString();
-  await pool.query(
-    'INSERT INTO fabrics (id, name, color, colorHex, stockRolls, notes, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, f.name, f.color, f.colorHex, f.stockRolls, f.notes, f.createdAt, f.updatedAt]
-  );
-  const [rows] = await pool.query('SELECT * FROM fabrics WHERE id = ?', [id]);
-  res.json(rows[0]);
+  try {
+    const f = req.body;
+    const id = f.id || Date.now().toString();
+    const createdAt = toSqlDate(f.createdAt) || toSqlDate(new Date().toISOString());
+    const updatedAt = toSqlDate(f.updatedAt) || toSqlDate(new Date().toISOString());
+    
+    await pool.query(
+      'INSERT INTO fabrics (id, name, color, colorHex, stockRolls, notes, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, f.name, f.color, f.colorHex, f.stockRolls, f.notes, createdAt, updatedAt]
+    );
+    const [rows] = await pool.query('SELECT * FROM fabrics WHERE id = ?', [id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.patch('/api/fabrics/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const queryParts = [];
+    const values = [];
+    
+    for (const [key, value] of Object.entries(updates)) {
+      if (key === 'id') continue;
+      queryParts.push(`${key} = ?`);
+      if (key === 'createdAt' || key === 'updatedAt') {
+        values.push(toSqlDate(value));
+      } else {
+        values.push(value);
+      }
+    }
+
+    if (queryParts.length > 0) {
+      await pool.query(`UPDATE fabrics SET ${queryParts.join(', ')} WHERE id = ?`, [...values, id]);
+    }
+    
+    const [rows] = await pool.query('SELECT * FROM fabrics WHERE id = ?', [id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.delete('/api/fabrics/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM fabrics WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // --- COSTUREIRAS ---
 app.get('/api/seamstresses', async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM seamstresses');
-  res.json(rows);
+  try {
+    const [rows] = await pool.query('SELECT * FROM seamstresses');
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 app.post('/api/seamstresses', async (req, res) => {
-  const s = req.body;
-  const id = s.id || Date.now().toString();
-  await pool.query(
-    'INSERT INTO seamstresses (id, name, phone, specialty, active, address, city) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [id, s.name, s.phone, s.specialty, s.active, s.address, s.city]
-  );
-  const [rows] = await pool.query('SELECT * FROM seamstresses WHERE id = ?', [id]);
-  res.json(rows[0]);
+  try {
+    const s = req.body;
+    const id = s.id || Date.now().toString();
+    await pool.query(
+      'INSERT INTO seamstresses (id, name, phone, specialty, active, address, city) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, s.name, s.phone, s.specialty, s.active, s.address, s.city]
+    );
+    const [rows] = await pool.query('SELECT * FROM seamstresses WHERE id = ?', [id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+app.put('/api/seamstresses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const s = req.body;
+    await pool.query(
+      'UPDATE seamstresses SET name=?, phone=?, specialty=?, active=?, address=?, city=? WHERE id=?',
+      [s.name, s.phone, s.specialty, s.active, s.address, s.city, id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 const PORT = process.env.PORT || 3003;

@@ -367,20 +367,23 @@ export default function App() {
     try {
         const timestamp = new Date().toISOString();
         if ('id' in fabric) {
-            await apiFetch(`fabrics/${fabric.id}`, {
+            // Chamada para atualizar tecido existente
+            const updated = await apiFetch(`fabrics/${fabric.id}`, {
                 method: 'PATCH',
                 body: JSON.stringify({ ...fabric, updatedAt: timestamp })
             });
-            setFabrics(prev => prev.map(f => f.id === fabric.id ? { ...f, ...fabric, updatedAt: timestamp } as Fabric : f));
+            setFabrics(prev => prev.map(f => f.id === fabric.id ? updated : f));
         } else {
+            // Chamada para criar novo tecido
             const saved = await apiFetch('fabrics', {
                 method: 'POST',
                 body: JSON.stringify({ ...fabric, createdAt: timestamp, updatedAt: timestamp })
             });
             setFabrics(prev => [...prev, saved]);
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error saving fabric:", error);
+        alert("Erro ao salvar tecido no banco de dados.");
     }
   };
 
