@@ -28,7 +28,8 @@ import {
   Scroll,
   Printer,
   Layers,
-  PlusCircle
+  PlusCircle,
+  Download
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -134,10 +135,6 @@ export default function App() {
   }, [orders]);
 
   const dashboardMetrics = useMemo(() => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
     const totalOrders = orders.length;
     const plannedOrdersCount = orders.filter(o => o.status === OrderStatus.PLANNED).length;
     const cuttingOrders = orders.filter(o => o.status === OrderStatus.CUTTING).length;
@@ -149,6 +146,9 @@ export default function App() {
 
     let totalPiecesProduced = 0;
     let monthPiecesProduced = 0;
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
 
     orders.forEach(order => {
         (Array.isArray(order.splits) ? order.splits : []).forEach(split => {
@@ -165,30 +165,6 @@ export default function App() {
             }
         });
     });
-
-    const seamstressStats = seamstresses.map(s => {
-        let produced = 0;
-        let activePackets = 0;
-
-        orders.forEach(o => {
-            (Array.isArray(o.splits) ? o.splits : []).forEach(split => {
-                if (split.seamstressId === s.id) {
-                    if (split.status === OrderStatus.FINISHED) {
-                        produced += Array.isArray(split.items) ? split.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0) : 0;
-                    } else if (split.status === OrderStatus.SEWING) {
-                        activePackets++;
-                    }
-                }
-            });
-        });
-
-        return {
-            ...s,
-            produced,
-            activePackets,
-            isIdle: s.active && activePackets === 0
-        };
-    }).sort((a, b) => b.produced - a.produced);
 
     const weeklyData = [];
     for (let i = 6; i >= 0; i--) {
@@ -233,18 +209,12 @@ export default function App() {
     }
 
     return {
-        totalOrders,
-        cuttingOrders,
-        sewingPackets,
         plannedOrdersCount,
         activeSeamstressesCount,
-        totalPiecesProduced,
         monthPiecesProduced,
-        seamstressStats,
+        cuttingOrders,
         weeklyData,
-        monthlyData,
-        idleSeamstresses: seamstressStats.filter(s => s.isIdle),
-        activeSeamstressesList: seamstressStats.filter(s => !s.isIdle && s.activePackets > 0)
+        monthlyData
     };
   }, [orders, seamstresses]);
 
@@ -392,6 +362,22 @@ export default function App() {
     try {
         const updatedFabricList = [...fabrics];
         
+        // --- VALIDAÇÃO DE ESTOQUE ---
+        const missingStock: string[] = [];
+        for (const item of (Array.isArray(order.items) ? order.items : [])) {
+             const fabricRec = fabrics.find(f => f.name.toLowerCase() === order.fabric.toLowerCase() && f.color.toLowerCase() === item.color.toLowerCase());
+             const used = Number(item.rollsUsed) || 0;
+             if (!fabricRec || fabricRec.stockRolls < used) {
+                 missingStock.push(`${item.color}: Disponível ${fabricRec?.stockRolls || 0}, Necessário ${used}`);
+             }
+        }
+
+        if (missingStock.length > 0) {
+            alert(`Estoque insuficiente de tecido (${order.fabric}) para iniciar o corte:\n\n${missingStock.join('\n')}\n\nPor favor, regularize o estoque antes de prosseguir.`);
+            return;
+        }
+
+        // --- ATUALIZAÇÃO DE ESTOQUE E STATUS ---
         for (const item of (Array.isArray(order.items) ? order.items : [])) {
              const fabricRecIdx = updatedFabricList.findIndex(f => f.name.toLowerCase() === order.fabric.toLowerCase() && f.color.toLowerCase() === item.color.toLowerCase());
              if (fabricRecIdx > -1) {
@@ -418,7 +404,7 @@ export default function App() {
         setProductionStage(OrderStatus.CUTTING);
     } catch (error) {
         console.error("Error moving to cutting:", error);
-        alert("Erro ao atualizar estoque de tecido. Verifique se o tecido e cor estão cadastrados corretamente.");
+        alert("Erro ao atualizar estoque de tecido. Tente novamente.");
     }
   };
   
@@ -657,6 +643,11 @@ export default function App() {
                 <button onClick={() => { setOrderToEdit(null); setIsOrderModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Nova Ordem</button>
               </>
             )}
+             {activeTab === 'reports' && (
+              <button onClick={handleGenerateAiReport} disabled={loadingAi} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg hover:opacity-90 transition-all disabled:opacity-50">
+                {loadingAi ? <Loader2 size={18} className="animate-spin" /> : <TrendingUp size={18} />} Analisar com IA
+              </button>
+            )}
             {activeTab === 'products' && (
               <button onClick={() => { setEditingProduct(null); setIsProductModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-full font-medium flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"><Plus size={18} /> Novo Produto</button>
             )}
@@ -671,7 +662,7 @@ export default function App() {
 
         <div className="p-8 max-w-7xl mx-auto space-y-8">
           {activeTab === 'dashboard' && (
-            <div className="space-y-8">
+            <div className="space-y-8 animate-in fade-in duration-500">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard title="Pedidos Planejados" value={dashboardMetrics.plannedOrdersCount} icon={ClipboardList} color="bg-blue-500" trend="Aguardando Corte" />
                 <StatCard title="Costureiras Ativas" value={dashboardMetrics.activeSeamstressesCount} icon={Users} color="bg-pink-500" trend="Costurando agora" />
@@ -711,8 +702,80 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === 'reports' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <FileText className="text-indigo-600" /> Relatório Geral de Produção
+                  </h3>
+                  <div className="flex gap-2">
+                    <button className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50">
+                      <Download size={16} /> Exportar PDF
+                    </button>
+                  </div>
+                </div>
+
+                {aiInsights && (
+                  <div className="mb-8 p-6 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100 shadow-sm relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                      <TrendingUp size={80} className="text-indigo-600" />
+                    </div>
+                    <h4 className="text-indigo-900 font-bold mb-3 flex items-center gap-2">
+                      <TrendingUp size={18} /> Insights da Inteligência Artificial
+                    </h4>
+                    <div className="prose prose-indigo prose-sm max-w-none text-indigo-800 whitespace-pre-wrap leading-relaxed">
+                      {aiInsights}
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold">
+                        <th className="p-4">Pedido</th>
+                        <th className="p-4">Data</th>
+                        <th className="p-4">Referência</th>
+                        <th className="p-4">Tecido</th>
+                        <th className="p-4">Peças</th>
+                        <th className="p-4">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-sm">
+                      {orders.map(o => (
+                        <tr key={o.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td>
+                          <td className="p-4 text-slate-500">{new Date(o.createdAt).toLocaleDateString()}</td>
+                          <td className="p-4">
+                            <div className="font-bold">{o.referenceCode}</div>
+                            <div className="text-xs text-slate-400">{o.description}</div>
+                          </td>
+                          <td className="p-4 text-slate-600">{o.fabric}</td>
+                          <td className="p-4 font-bold text-slate-700">
+                            {o.items.reduce((acc, i) => acc + (o.status === OrderStatus.PLANNED ? i.estimatedPieces : i.actualPieces), 0)}
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                              o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' :
+                              o.status === OrderStatus.SEWING ? 'bg-indigo-100 text-indigo-700' :
+                              o.status === OrderStatus.CUTTING ? 'bg-purple-100 text-purple-700' :
+                              'bg-slate-100 text-slate-600'
+                            }`}>
+                              {o.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'fabrics' && (
-             <div className="space-y-6">
+             <div className="space-y-6 animate-in fade-in duration-500">
                  <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex gap-4 items-center flex-wrap">
                     <div className="flex-1 min-w-[200px]">
                         <label className="block text-xs font-bold text-slate-500 mb-1">Buscar Tecido</label>
@@ -739,7 +802,7 @@ export default function App() {
           )}
 
           {activeTab === 'production' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px]">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px] animate-in fade-in duration-500">
               <div className="flex p-2 bg-slate-100/50 border-b border-slate-200">
                 {(Object.values(OrderStatus) as OrderStatus[]).map((status) => {
                     const Icon = getStageIcon(status);
@@ -840,7 +903,7 @@ export default function App() {
           )}
 
           {activeTab === 'products' && (
-             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in fade-in duration-500">
                 <table className="w-full text-left border-collapse">
                   <thead><tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4">Código</th><th className="p-4">Descrição</th><th className="p-4">Tecido</th><th className="p-4">Cores</th><th className="p-4 text-right">Ações</th></tr></thead>
                   <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
@@ -864,7 +927,7 @@ export default function App() {
           )}
 
           {activeTab === 'seamstresses' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
               {seamstresses.map(seamstress => (
                   <div key={seamstress.id} className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative group">
                     <button onClick={() => { setSeamstressToEdit(seamstress); setIsSeamstressModalOpen(true); }} className="absolute top-4 right-4 text-slate-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100"><Edit2 size={18} /></button>
