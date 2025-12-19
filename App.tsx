@@ -203,7 +203,8 @@ export default function App() {
       if ('id' in product) {
         await apiFetch(`products/${product.id}`, { method: 'PUT', body: JSON.stringify(product) });
       } else {
-        await apiFetch('products', { method: 'POST', body: JSON.stringify(product) });
+        const id = Date.now().toString();
+        await apiFetch('products', { method: 'POST', body: JSON.stringify({ ...product, id }) });
       }
       fetchData();
     } catch (error) {
@@ -292,7 +293,8 @@ export default function App() {
               await apiFetch(`seamstresses/${seamstress.id}`, { method: 'PUT', body: JSON.stringify(seamstress) });
               setSeamstresses(prev => prev.map(s => s.id === seamstress.id ? seamstress as Seamstress : s));
           } else {
-              const saved = await apiFetch('seamstresses', { method: 'POST', body: JSON.stringify(seamstress) });
+              const id = Date.now().toString();
+              const saved = await apiFetch('seamstresses', { method: 'POST', body: JSON.stringify({...seamstress, id}) });
               setSeamstresses(prev => [...prev, saved]);
           }
       } catch (error) { console.error("Error saving seamstress:", error); }
@@ -348,7 +350,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-800 font-sans overflow-hidden relative">
-      {/* Sidebar - Mantendo ordem e cores */}
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-indigo-950 text-white flex flex-col shadow-xl transition-transform duration-300 lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-8 flex items-center justify-between">
           <div><h1 className="text-3xl font-bold tracking-tighter bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">Kavin's</h1><p className="text-[10px] text-indigo-300 mt-1 uppercase tracking-widest font-bold">Produção</p></div>
@@ -512,7 +513,49 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'fabrics' && (<div className="space-y-6 animate-in fade-in duration-500"><div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex gap-4 items-center flex-wrap"><div className="flex-1 min-w-[200px]"><label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase">Filtrar Tecido</label><input type="text" placeholder="Nome do tecido..." className="w-full px-4 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none text-sm" value={fabricFilters.name} onChange={e => setFabricFilters({...fabricFilters, name: e.target.value})}/></div></div><div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">{fabrics.filter(f => f.name.toLowerCase().includes(fabricFilters.name.toLowerCase())).map(fabric => (<div key={fabric.id} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm relative group hover:shadow-md transition-all"><div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => { setFabricToEdit(fabric); setIsFabricModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1 bg-white rounded shadow-sm"><Edit2 size={16}/></button></div><div className="flex items-center gap-3 mb-4"><div className="w-10 h-10 rounded-full border border-slate-100 shadow-inner" style={{backgroundColor: fabric.colorHex}}></div><div><h3 className="font-bold text-slate-800 text-sm">{fabric.name}</h3><p className="text-[10px] text-slate-500">{fabric.color}</p></div></div><div className="bg-slate-50 rounded-xl p-3 text-center"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Estoque Disponível</p><p className={`text-2xl font-bold ${fabric.stockRolls < 3 ? 'text-red-500' : 'text-indigo-600'}`}>{fabric.stockRolls} <span className="text-xs font-normal text-slate-400 uppercase tracking-tighter">rolos</span></p></div></div>))}</div></div>)}
+          {activeTab === 'fabrics' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex gap-4 items-center flex-wrap">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase">Filtrar Tecido</label>
+                  <input type="text" placeholder="Nome do tecido..." className="w-full px-4 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:ring-2 focus:ring-indigo-100 outline-none text-sm" value={fabricFilters.name} onChange={e => setFabricFilters({...fabricFilters, name: e.target.value})}/>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {fabrics.filter(f => f.name.toLowerCase().includes(fabricFilters.name.toLowerCase())).map(fabric => (
+                  <div key={fabric.id} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm relative group hover:shadow-md transition-all">
+                    <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        title="Adicionar entrada de tecido"
+                        onClick={() => { setFabricToEdit(fabric); setIsFabricModalOpen(true); }} 
+                        className="text-indigo-600 hover:bg-indigo-50 p-1.5 bg-white rounded-lg shadow-sm border border-slate-200"
+                      >
+                        <Plus size={16}/>
+                      </button>
+                      <button 
+                        title="Editar cadastro"
+                        onClick={() => { setFabricToEdit(fabric); setIsFabricModalOpen(true); }} 
+                        className="text-slate-400 hover:text-indigo-600 p-1.5 bg-white rounded-lg shadow-sm border border-slate-200"
+                      >
+                        <Edit2 size={16}/>
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-full border border-slate-100 shadow-inner" style={{backgroundColor: fabric.colorHex}}></div>
+                      <div>
+                        <h3 className="font-bold text-slate-800 text-sm">{fabric.name}</h3>
+                        <p className="text-[10px] text-slate-500">{fabric.color}</p>
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3 text-center">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Estoque Disponível</p>
+                      <p className={`text-2xl font-bold ${fabric.stockRolls < 3 ? 'text-red-500' : 'text-indigo-600'}`}>{fabric.stockRolls} <span className="text-xs font-normal text-slate-400 uppercase tracking-tighter">rolos</span></p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {activeTab === 'products' && (<div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden animate-in fade-in duration-500"><div className="overflow-x-auto"><table className="w-full text-left border-collapse min-w-[600px]"><thead><tr className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500 font-semibold"><th className="p-4">Código</th><th className="p-4">Descrição / Modelo</th><th className="p-4">Tecido Padrão</th><th className="p-4 text-right">Gerenciar</th></tr></thead><tbody className="divide-y divide-slate-100 text-sm text-slate-700">{references.map(ref => (<tr key={ref.id} className="hover:bg-slate-50 transition-colors"><td className="p-4 font-bold text-indigo-900">{ref.code}</td><td className="p-4">{ref.description}</td><td className="p-4 text-xs">{ref.defaultFabric}</td><td className="p-4 text-right"><div className="flex justify-end gap-2"><button onClick={() => { setEditingProduct(ref); setIsProductModalOpen(true); }} className="text-indigo-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-indigo-50 transition-colors"><Edit2 size={16} /></button><button onClick={async () => { if(window.confirm("Excluir produto permanentemente?")) { await apiFetch(`products/${ref.id}`, { method: 'DELETE' }); fetchData(); } }} className="text-slate-400 hover:text-red-500 p-2 rounded-lg hover:bg-red-50 transition-colors"><Trash2 size={16} /></button></div></td></tr>))}</tbody></table></div></div>)}
         </div>
@@ -523,7 +566,10 @@ export default function App() {
       <ProductModal isOpen={isProductModalOpen} onClose={() => setIsProductModalOpen(false)} onSave={handleSaveProduct} productToEdit={editingProduct} fabrics={fabrics}/>
       <FabricModal isOpen={isFabricModalOpen} onClose={() => setIsFabricModalOpen(false)} onSave={async (f) => { 
           if ('id' in f) await apiFetch(`fabrics/${f.id}`, { method: 'PATCH', body: JSON.stringify(f) });
-          else await apiFetch('fabrics', { method: 'POST', body: JSON.stringify(f) });
+          else {
+            const id = Date.now().toString();
+            await apiFetch('fabrics', { method: 'POST', body: JSON.stringify({ ...f, id }) });
+          }
           fetchData(); 
           setIsFabricModalOpen(false);
       }} fabricToEdit={fabricToEdit}/>
