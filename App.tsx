@@ -87,6 +87,7 @@ export default function App() {
   const [isFabricModalOpen, setIsFabricModalOpen] = useState(false);
   
   const [expandedOrders, setExpandedOrders] = useState<string[]>([]);
+  const [expandedReportOrders, setExpandedReportOrders] = useState<string[]>([]);
   
   const [cuttingOrder, setCuttingOrder] = useState<ProductionOrder | null>(null);
   const [distributingOrder, setDistributingOrder] = useState<ProductionOrder | null>(null);
@@ -101,7 +102,8 @@ export default function App() {
     startDate: '',
     endDate: '',
     fabric: '',
-    seamstress: ''
+    seamstress: '',
+    reference: ''
   });
 
   const [fabricFilters, setFabricFilters] = useState({
@@ -195,13 +197,11 @@ export default function App() {
         const existingIndex = orders.findIndex(o => o.id === newOrderData.id);
         const timestamp = new Date().toISOString();
         
-        // Garantir que campos críticos estão presentes
         const payload = { 
           ...newOrderData, 
           updatedAt: timestamp,
-          // Se for novo, garantir campos de fluxo
-          activeCuttingItems: newOrderData.activeCuttingItems || [],
-          splits: newOrderData.splits || []
+          activeCuttingItems: Array.isArray(newOrderData.activeCuttingItems) ? newOrderData.activeCuttingItems : [],
+          splits: Array.isArray(newOrderData.splits) ? newOrderData.splits : []
         };
 
         if (existingIndex > -1) {
@@ -409,7 +409,7 @@ export default function App() {
           <div class="items-list">
       `;
       o.items.forEach(item => {
-        content += `<div class="item-line">Cor: <strong>${item.color}</strong> &nbsp;&nbsp;&nbsp; Rolos: <strong>${item.rollsUsed}</strong> - &nbsp;&nbsp;&nbsp; </div>`;
+        content += `<div class="item-line">Cor: &nbsp; <strong>${item.color}</strong> &nbsp;&nbsp;&nbsp; Rolos: <strong>${item.rollsUsed}</strong> - &nbsp;&nbsp;&nbsp; </div>`;
       });
       content += `
           </div>
@@ -430,15 +430,16 @@ export default function App() {
     const startMatch = reportFilters.startDate ? orderDate >= reportFilters.startDate : true;
     const endMatch = reportFilters.endDate ? orderDate <= reportFilters.endDate : true;
     const fabricMatch = reportFilters.fabric ? o.fabric.toLowerCase() === reportFilters.fabric.toLowerCase() : true;
+    const refMatch = reportFilters.reference ? o.referenceCode.toLowerCase().includes(reportFilters.reference.toLowerCase()) : true;
     const seamstressMatch = reportFilters.seamstress ? (o.splits || []).some(s => s.seamstressName.toLowerCase() === reportFilters.seamstress.toLowerCase()) : true;
-    return startMatch && endMatch && fabricMatch && seamstressMatch;
+    return startMatch && endMatch && fabricMatch && seamstressMatch && refMatch;
   }), [orders, reportFilters]);
 
   const reportMetrics = useMemo(() => {
     const totalCut = reportFilteredOrders.reduce((acc, o) => acc + (o.items || []).reduce((iAcc, i) => iAcc + (i.actualPieces || 0), 0), 0);
     const totalSewn = reportFilteredOrders.reduce((acc, o) => acc + (o.splits || []).reduce((sAcc, s) => s.status === OrderStatus.FINISHED ? sAcc + s.items.reduce((iAcc, i) => iAcc + (i.actualPieces || 0), 0) : sAcc, 0), 0);
     const totalRolls = reportFilteredOrders.reduce((acc, o) => acc + (o.items || []).reduce((iAcc, i) => iAcc + (Number(i.rollsUsed) || 0), 0), 0);
-    return { totalCut, totalSewn, totalRolls, count: reportFilteredOrders.length };
+    return { totalCut, totalSewn, totalRolls: Math.round(totalRolls), count: reportFilteredOrders.length };
   }, [reportFilteredOrders]);
 
   const seamstressData = useMemo(() => {
@@ -562,7 +563,7 @@ export default function App() {
                   <p className="text-[10px] text-slate-500 uppercase font-bold">Total Costurado (Filtro)</p>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
-                  <p className="text-2xl font-bold text-amber-600">{reportMetrics.totalRolls.toFixed(1)}</p>
+                  <p className="text-2xl font-bold text-amber-600">{reportMetrics.totalRolls}</p>
                   <p className="text-[10px] text-slate-500 uppercase font-bold">Total de Rolos</p>
                 </div>
                 <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm text-center">
@@ -575,40 +576,111 @@ export default function App() {
                 <div className="flex flex-wrap gap-4 mb-6">
                   <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Início</label><input type="date" className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.startDate} onChange={e => setReportFilters({...reportFilters, startDate: e.target.value})}/></div>
                   <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Fim</label><input type="date" className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.endDate} onChange={e => setReportFilters({...reportFilters, endDate: e.target.value})}/></div>
+                  <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Referência</label><input type="text" placeholder="REF-001..." className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.reference} onChange={e => setReportFilters({...reportFilters, reference: e.target.value})}/></div>
                   <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Tecido</label><select className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.fabric} onChange={e => setReportFilters({...reportFilters, fabric: e.target.value})}><option value="">Tecido</option>{uniqueFabricNames.map(f => <option key={f} value={f}>{f}</option>)}</select></div>
                   <div className="flex flex-col"><label className="text-[10px] font-bold text-slate-400 uppercase mb-1">Costureira</label><select className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm outline-none" value={reportFilters.seamstress} onChange={e => setReportFilters({...reportFilters, seamstress: e.target.value})}><option value="">Costureira</option>{uniqueSeamstressNames.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-                  <button onClick={() => setReportFilters({startDate: '', endDate: '', fabric: '', seamstress: ''})} className="mt-5 text-slate-400 hover:text-red-500"><Trash2 size={20}/></button>
+                  <button onClick={() => setReportFilters({startDate: '', endDate: '', fabric: '', seamstress: '', reference: ''})} className="mt-5 text-slate-400 hover:text-red-500"><Trash2 size={20}/></button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-[11px] uppercase font-bold text-slate-500 border-collapse">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="p-4 w-10"></th>
                         <th className="p-4">ID</th>
                         <th className="p-4">Data Pedido</th>
                         <th className="p-4">Ref / Descrição</th>
                         <th className="p-4">Status</th>
                         <th className="p-4">Qtd Corte</th>
-                        <th className="p-4">Data Entrega</th>
-                        <th className="p-4">Observações</th>
-                        <th className="p-4">Histórico de Costura</th>
+                        <th className="p-4">Finalizado em</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-normal text-slate-700 normal-case">
                       {reportFilteredOrders.length === 0 ? (
-                        <tr><td colSpan={8} className="p-12 text-center text-slate-400 italic">Nenhum registro para estes filtros.</td></tr>
+                        <tr><td colSpan={7} className="p-12 text-center text-slate-400 italic">Nenhum registro para estes filtros.</td></tr>
                       ) : (
-                        reportFilteredOrders.map(o => (
-                          <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td>
-                            <td className="p-4">{new Date(o.createdAt).toLocaleDateString('pt-BR')}</td>
-                            <td className="p-4"><div className="font-bold">{o.referenceCode}</div><div className="text-[10px] text-slate-400">{o.description}</div></td>
-                            <td className="p-4"><span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{o.status}</span></td>
-                            <td className="p-4 font-bold">{o.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0)}</td>
-                            <td className="p-4">{o.finishedAt ? new Date(o.finishedAt).toLocaleDateString('pt-BR') : '-'}</td>
-                            <td className="p-4 text-[10px] text-slate-500">{o.notes || '-'}</td>
-                            <td className="p-4 text-[10px]">{(o.splits || []).map(s => `${s.seamstressName} (${s.status === OrderStatus.FINISHED ? 'Feito' : 'Fazendo'})`).join(', ') || '-'}</td>
-                          </tr>
-                        ))
+                        reportFilteredOrders.map(o => {
+                          const isExpanded = expandedReportOrders.includes(o.id);
+                          return (
+                            <React.Fragment key={o.id}>
+                              <tr className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => setExpandedReportOrders(prev => prev.includes(o.id) ? prev.filter(id => id !== o.id) : [...prev, o.id])}>
+                                <td className="p-4 text-center">
+                                  <button className="text-slate-400">{isExpanded ? <ChevronUp size={16}/> : <ChevronDown size={16}/>}</button>
+                                </td>
+                                <td className="p-4 font-mono font-bold text-indigo-700">#{o.id}</td>
+                                <td className="p-4">{new Date(o.createdAt).toLocaleDateString('pt-BR')}</td>
+                                <td className="p-4"><div className="font-bold">{o.referenceCode}</div><div className="text-[10px] text-slate-400">{o.description}</div></td>
+                                <td className="p-4"><span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${o.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{o.status}</span></td>
+                                <td className="p-4 font-bold">{o.items.reduce((acc, i) => acc + (i.actualPieces || 0), 0)}</td>
+                                <td className="p-4">{o.finishedAt ? new Date(o.finishedAt).toLocaleDateString('pt-BR') : '-'}</td>
+                              </tr>
+                              {isExpanded && (
+                                <tr>
+                                  <td colSpan={7} className="p-0 border-b border-slate-200">
+                                    <div className="bg-slate-50 p-6 animate-in slide-in-from-top-2">
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                        <div>
+                                          <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3 flex items-center gap-2"><Scissors size={14}/> Detalhamento por Cor</h4>
+                                          <div className="space-y-2">
+                                            {o.items.map((item, idx) => (
+                                              <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                                                <div className="flex items-center gap-3">
+                                                  <div className="w-4 h-4 rounded-full border border-slate-100" style={{backgroundColor: item.colorHex}}></div>
+                                                  <span className="font-bold text-slate-700">{item.color}</span>
+                                                </div>
+                                                <div className="flex gap-4 text-xs">
+                                                  {Object.entries(item.sizes).map(([size, qty]) => (
+                                                    <div key={size} className="flex flex-col items-center min-w-[20px]">
+                                                      <span className="text-slate-400 font-bold">{size}</span>
+                                                      <span className="text-indigo-600 font-bold">{qty}</span>
+                                                    </div>
+                                                  ))}
+                                                  <div className="border-l border-slate-100 pl-4 flex flex-col items-center">
+                                                    <span className="text-slate-400 font-bold uppercase">Total</span>
+                                                    <span className="text-slate-800 font-bold">{item.actualPieces}</span>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3 flex items-center gap-2"><Shirt size={14}/> Entregas de Costura</h4>
+                                          <div className="space-y-2">
+                                            {o.splits && o.splits.length > 0 ? o.splits.map((split) => (
+                                              <div key={split.id} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                                                <div className="flex justify-between items-start mb-2">
+                                                  <div>
+                                                    <p className="font-bold text-slate-800">{split.seamstressName}</p>
+                                                    <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                                      <span>Enviado: {new Date(split.createdAt).toLocaleDateString('pt-BR')}</span>
+                                                      {split.finishedAt && <span className="text-emerald-600 font-bold">• Entregue em: {new Date(split.finishedAt).toLocaleDateString('pt-BR')}</span>}
+                                                    </div>
+                                                  </div>
+                                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${split.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                    {split.status}
+                                                  </span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2">
+                                                  {split.items.map((si, sidx) => (
+                                                    <div key={sidx} className="text-[9px] bg-slate-50 px-2 py-1 rounded border border-slate-100 flex items-center gap-1">
+                                                      <div className="w-2 h-2 rounded-full" style={{backgroundColor: si.colorHex}}></div>
+                                                      <span className="font-bold">{si.color}:</span>
+                                                      <span>{si.actualPieces} pçs</span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            )) : <p className="text-xs text-slate-400 italic text-center py-4 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">Nenhuma distribuição vinculada.</p>}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          )
+                        })
                       )}
                     </tbody>
                   </table>
@@ -769,7 +841,10 @@ export default function App() {
                                             <div className="flex justify-between items-start mb-2">
                                               <div>
                                                 <p className="font-bold text-slate-800">{split.seamstressName}</p>
-                                                <p className="text-[10px] text-slate-400">{new Date(split.createdAt).toLocaleDateString('pt-BR')}</p>
+                                                <div className="text-[10px] text-slate-400">
+                                                  <span>Enviado em: {new Date(split.createdAt).toLocaleDateString('pt-BR')}</span>
+                                                  {split.finishedAt && <span className="text-emerald-600 ml-2">• Entregue em: {new Date(split.finishedAt).toLocaleDateString('pt-BR')}</span>}
+                                                </div>
                                               </div>
                                               <div className="flex items-center gap-2">
                                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${split.status === OrderStatus.FINISHED ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
