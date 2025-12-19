@@ -36,7 +36,10 @@ import {
   Tooltip, 
   ResponsiveContainer,
   LineChart,
-  Line
+  Line,
+  Cell,
+  PieChart,
+  Pie
 } from 'recharts';
 
 import { StatCard } from './components/StatCard';
@@ -151,27 +154,79 @@ export default function App() {
     }
   };
 
-  const nextOrderId = useMemo(() => {
-    const ids = orders.map(o => parseInt(o.id)).filter(n => !isNaN(n));
-    if (ids.length === 0) return '1';
-    return (Math.max(...ids) + 1).toString();
-  }, [orders]);
-
   const dashboardMetrics = useMemo(() => {
     const plannedCount = orders.filter(o => o.status === OrderStatus.PLANNED).length;
     const cuttingCount = orders.filter(o => o.status === OrderStatus.CUTTING).length;
     const sewingCount = orders.filter(o => o.status === OrderStatus.SEWING).length;
     
+    // Produção Semanal (últimos 7 dias)
     const weeklyData = Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (6 - i));
       const dateStr = d.toLocaleDateString('pt-BR', { weekday: 'short' });
       const dateIso = d.toISOString().split('T')[0];
-      const count = orders.reduce((acc, o) => acc + (o.splits || []).reduce((sAcc, s) => (s.finishedAt && s.finishedAt.startsWith(dateIso)) ? sAcc + s.items.reduce((iAcc, i) => iAcc + (i.actualPieces || 0), 0) : sAcc, 0), 0);
-      return { name: dateStr, pecas: count };
+      
+      const pieces = orders.reduce((acc, o) => {
+        const finishedInDate = (o.splits || []).filter(s => s.status === OrderStatus.FINISHED && s.finishedAt?.startsWith(dateIso));
+        const piecesInDate = finishedInDate.reduce((sAcc, s) => sAcc + s.items.reduce((iAcc, item) => iAcc + (item.actualPieces || 0), 0), 0);
+        return acc + piecesInDate;
+      }, 0);
+
+      return { name: dateStr, pecas: pieces };
     });
 
-    return { plannedOrdersCount: plannedCount, cuttingOrders: cuttingCount, sewingOrdersCount: sewingCount, weeklyData };
+    // Produção Mensal (últimos 6 meses)
+    const monthlyData = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date();
+      d.setMonth(d.getMonth() - (5 - i));
+      const monthStr = d.toLocaleDateString('pt-BR', { month: 'short' });
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      
+      const pieces = orders.reduce((acc, o) => {
+        const finishedInMonth = (o.splits || []).filter(s => {
+          if (!s.finishedAt) return false;
+          const fDate = new Date(s.finishedAt);
+          return fDate.getMonth() === month && fDate.getFullYear() === year;
+        });
+        const piecesInMonth = finishedInMonth.reduce((sAcc, s) => sAcc + s.items.reduce((iAcc, item) => iAcc + (item.actualPieces || 0), 0), 0);
+        return acc + piecesInMonth;
+      }, 0);
+
+      return { name: monthStr, pecas: pieces };
+    });
+
+    // Status Costureiras
+    const sewingCountS = seamstresses.filter(s => s.active && orders.some(o => (o.splits || []).some(split => split.seamstressId === s.id && split.status === OrderStatus.SEWING))).length;
+    const idleCount = seamstresses.filter(s => s.active && !orders.some(o => (o.splits || []).some(split => split.seamstressId === s.id && split.status === OrderStatus.SEWING))).length;
+    const inactiveCount = seamstresses.filter(s => !s.active).length;
+
+    const seamstressStatusData = [
+      { name: 'Costurando', value: sewingCountS, color: '#4f46e5' },
+      { name: 'Parada', value: idleCount, color: '#f59e0b' },
+      { name: 'Inativa', value: inactiveCount, color: '#94a3b8' }
+    ];
+
+    return { 
+      plannedOrdersCount: plannedCount, 
+      cuttingOrders: cuttingCount, 
+      sewingOrdersCount: sewingCount, 
+      weeklyData, 
+      monthlyData, 
+      seamstressStatusData 
+    };
+  }, [orders, seamstresses]);
+
+  // FIX: Added missing nextOrderId definition to fix compilation error.
+  // It calculates the next numeric ID based on existing orders.
+  const nextOrderId = useMemo(() => {
+    if (orders.length === 0) return '1';
+    const numericIds = orders
+      .map(o => parseInt(o.id))
+      .filter(id => !isNaN(id));
+    return numericIds.length > 0 
+      ? (Math.max(...numericIds) + 1).toString() 
+      : (orders.length + 1).toString();
   }, [orders]);
 
   const handleCreateOrder = async (newOrderData: Omit<ProductionOrder, 'updatedAt'>) => {
@@ -196,7 +251,6 @@ export default function App() {
     }
   };
 
-  // Fix: Added missing handleDeleteOrder function to handle order deletion
   const handleDeleteOrder = async (id: string) => {
     if (!window.confirm("Tem certeza que deseja excluir esta ordem?")) return;
     try {
@@ -382,6 +436,72 @@ export default function App() {
                 <StatCard title="Em Corte" value={dashboardMetrics.cuttingOrders} icon={Scissors} color="bg-purple-500" />
                 <StatCard title="Costurando" value={dashboardMetrics.sewingOrdersCount} icon={Shirt} color="bg-pink-500" />
                 <StatCard title="Total de Ordens" value={orders.length} icon={Layers} color="bg-indigo-500" />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Weekly Chart */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                  <h3 className="text-lg font-bold text-slate-800 mb-6">Produção Semanal (7 Dias)</h3>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={dashboardMetrics.weeklyData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                        <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                        <Bar dataKey="pecas" fill="#4f46e5" radius={[4, 4, 0, 0]} barSize={40} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Monthly Chart */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                  <h3 className="text-lg font-bold text-slate-800 mb-6">Produção Mensal</h3>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={dashboardMetrics.monthlyData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                        <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                        <Line type="monotone" dataKey="pecas" stroke="#4f46e5" strokeWidth={3} dot={{r: 4, fill: '#4f46e5'}} activeDot={{r: 6}} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Seamstress Status Chart */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 lg:col-span-2">
+                  <h3 className="text-lg font-bold text-slate-800 mb-6">Disponibilidade das Costureiras</h3>
+                  <div className="flex flex-col md:flex-row items-center gap-8">
+                    <div className="h-48 w-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={dashboardMetrics.seamstressStatusData}
+                            innerRadius={60}
+                            outerRadius={80}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {dashboardMetrics.seamstressStatusData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 flex-1 w-full">
+                      {dashboardMetrics.seamstressStatusData.map((status, idx) => (
+                        <div key={idx} className="p-4 rounded-xl border border-slate-50 bg-slate-50/50">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{status.name}</p>
+                          <p className="text-2xl font-black text-slate-800 mt-1">{status.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

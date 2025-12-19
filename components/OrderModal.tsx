@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { X, Save, Plus, Trash2, Calendar, Hash } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, Save, Plus, Trash2, Calendar, Hash, Search, Info } from 'lucide-react';
 import { ProductionOrder, OrderStatus, ProductionOrderItem, Fabric, Seamstress, ProductReference } from '../types';
 
 interface OrderModalProps {
@@ -19,16 +19,33 @@ interface OrderItemInput {
   colorHex?: string;
   rollsUsed: number;
   piecesPerSize: number;
+  estimatedPieces: number;
 }
 
-export const OrderModal: React.FC<OrderModalProps> = ({ isOpen, onClose, onSave, fabrics, seamstresses, orderToEdit, suggestedId }) => {
+export const OrderModal: React.FC<OrderModalProps> = ({ isOpen, onClose, onSave, references, fabrics, seamstresses, orderToEdit, suggestedId }) => {
   const [customId, setCustomId] = useState('');
   const [orderDate, setOrderDate] = useState('');
   const [referenceCode, setReferenceCode] = useState('');
   const [fabric, setFabric] = useState('');
-  const [selectedSeamstressId, setSelectedSeamstressId] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState('');
   const [notes, setNotes] = useState('');
-  const [items, setItems] = useState<OrderItemInput[]>([{ color: '', colorHex: '', rollsUsed: 0, piecesPerSize: 0 }]);
+  const [items, setItems] = useState<OrderItemInput[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Filtra referências com base no termo de busca
+  const filteredReferences = useMemo(() => {
+    if (!searchTerm) return [];
+    return references.filter(r => 
+      r.code.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      r.description.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [references, searchTerm]);
+
+  const selectedProduct = useMemo(() => 
+    references.find(r => r.id === selectedProductId), 
+    [references, selectedProductId]
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -37,33 +54,80 @@ export const OrderModal: React.FC<OrderModalProps> = ({ isOpen, onClose, onSave,
         setOrderDate(new Date(orderToEdit.createdAt).toISOString().split('T')[0]);
         setReferenceCode(orderToEdit.referenceCode);
         setFabric(orderToEdit.fabric);
-        setSelectedSeamstressId(orderToEdit.seamstressId || '');
+        setSelectedProductId(orderToEdit.referenceId);
         setNotes(orderToEdit.notes || '');
-        setItems(orderToEdit.items.map(i => ({ color: i.color, colorHex: i.colorHex, rollsUsed: i.rollsUsed, piecesPerSize: i.piecesPerSizeEst })));
+        setItems(orderToEdit.items.map(i => ({ 
+          color: i.color, 
+          colorHex: i.colorHex, 
+          rollsUsed: i.rollsUsed, 
+          piecesPerSize: i.piecesPerSizeEst,
+          estimatedPieces: i.estimatedPieces
+        })));
       } else {
         setCustomId(suggestedId || '');
         setOrderDate(new Date().toISOString().split('T')[0]);
         setReferenceCode('');
         setFabric('');
-        setSelectedSeamstressId('');
+        setSelectedProductId('');
+        setSearchTerm('');
         setNotes('');
-        setItems([{ color: '', colorHex: '', rollsUsed: 0, piecesPerSize: 0 }]);
+        setItems([]);
       }
     }
   }, [isOpen, orderToEdit, suggestedId]);
 
-  const handleAddItem = () => setItems([...items, { color: '', colorHex: '', rollsUsed: 0, piecesPerSize: 0 }]);
-  const handleRemoveItem = (index: number) => items.length > 1 && setItems(items.filter((_, i) => i !== index));
+  // Ao selecionar um produto, automatiza tecido e cores
+  const handleSelectProduct = (product: ProductReference) => {
+    setSelectedProductId(product.id);
+    setReferenceCode(product.code);
+    setFabric(product.defaultFabric);
+    setSearchTerm(product.code);
+    setIsSearching(false);
+    
+    // Inicializa cores do produto
+    const initialItems = product.defaultColors.map(color => ({
+      color: color.name,
+      colorHex: color.hex,
+      rollsUsed: 0,
+      piecesPerSize: 0,
+      estimatedPieces: 0
+    }));
+    setItems(initialItems);
+  };
+
   const updateItem = (index: number, field: keyof OrderItemInput, value: any) => {
     const newItems = [...items];
-    newItems[index] = { ...newItems[index], [field]: value };
+    const item = { ...newItems[index], [field]: value };
+    
+    // Se mudar rolos e houver estimativa no produto, calcula peças
+    if (field === 'rollsUsed' && selectedProduct?.estimatedPiecesPerRoll) {
+      const rolls = parseFloat(value) || 0;
+      item.estimatedPieces = Math.round(rolls * selectedProduct.estimatedPiecesPerRoll);
+      // Opcional: atualizar peças/tamanho se quiser manter coerência
+      item.piecesPerSize = Math.round(item.estimatedPieces / 4); // Assume padrão 4 tamanhos
+    }
+
+    newItems[index] = item;
     setItems(newItems);
+  };
+
+  const handleAddItem = () => {
+    setItems([...items, { color: '', colorHex: '#ccc', rollsUsed: 0, piecesPerSize: 0, estimatedPieces: 0 }]);
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setItems(items.filter((_, i) => i !== index));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedProductId) {
+      alert("Selecione uma referência válida.");
+      return;
+    }
+
     const productionItems: ProductionOrderItem[] = items.map(item => {
-      const selectedSizes = ['P', 'M', 'G', 'GG']; // Padrão simples
+      const selectedSizes = ['P', 'M', 'G', 'GG']; 
       const initialSizes: any = {};
       selectedSizes.forEach(s => initialSizes[s] = item.piecesPerSize);
       return {
@@ -71,7 +135,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({ isOpen, onClose, onSave,
         colorHex: item.colorHex || '#ccc',
         rollsUsed: item.rollsUsed,
         piecesPerSizeEst: item.piecesPerSize,
-        estimatedPieces: item.piecesPerSize * selectedSizes.length,
+        estimatedPieces: item.estimatedPieces,
         actualPieces: 0, 
         sizes: initialSizes
       };
@@ -79,11 +143,10 @@ export const OrderModal: React.FC<OrderModalProps> = ({ isOpen, onClose, onSave,
 
     onSave({
       id: customId,
-      referenceId: Date.now().toString(),
+      referenceId: selectedProductId,
       referenceCode,
-      description: referenceCode,
+      description: selectedProduct?.description || referenceCode,
       fabric,
-      seamstressId: selectedSeamstressId,
       items: productionItems,
       activeCuttingItems: [],
       splits: [],
@@ -109,32 +172,107 @@ export const OrderModal: React.FC<OrderModalProps> = ({ isOpen, onClose, onSave,
             <div><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Pedido #</label><input required type="text" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none" value={customId} onChange={e => setCustomId(e.target.value)} /></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Data</label><input required type="date" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none" value={orderDate} onChange={e => setOrderDate(e.target.value)} /></div>
           </div>
-          <div><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Referência (Digitar)</label><input required type="text" placeholder="Ex: REF-102" className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none" value={referenceCode} onChange={e => setReferenceCode(e.target.value)} /></div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Tecido</label>
-              <select required className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none bg-white" value={fabric} onChange={e => setFabric(e.target.value)}>
-                <option value="">Selecione...</option>
-                {Array.from(new Set(fabrics.map(f => f.name))).map(name => <option key={name} value={name}>{name}</option>)}
-              </select>
+          
+          <div className="relative">
+            <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Buscar Referência</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input 
+                required 
+                type="text" 
+                placeholder="Digite o código ou nome do produto..." 
+                className="w-full pl-10 pr-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none" 
+                value={searchTerm} 
+                onChange={e => { setSearchTerm(e.target.value); setIsSearching(true); }}
+                onFocus={() => setIsSearching(true)}
+              />
             </div>
-            <div><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Costureira (Opcional)</label>
-              <select className="w-full px-4 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 outline-none bg-white" value={selectedSeamstressId} onChange={e => setSelectedSeamstressId(e.target.value)}>
-                <option value="">Nenhuma...</option>
-                {seamstresses.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center"><h3 className="text-xs font-bold text-slate-700 uppercase">Cores e Quantidades</h3><button type="button" onClick={handleAddItem} className="text-xs font-bold text-indigo-600 flex items-center gap-1"><Plus size={14}/> Adicionar Cor</button></div>
-            {items.map((item, idx) => (
-              <div key={idx} className="flex gap-2 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                <input required placeholder="Cor" className="flex-1 px-3 py-1 rounded border text-sm" value={item.color} onChange={e => updateItem(idx, 'color', e.target.value)} />
-                <input required type="number" step="0.1" placeholder="Rolos" className="w-20 px-3 py-1 rounded border text-sm" value={item.rollsUsed || ''} onChange={e => updateItem(idx, 'rollsUsed', e.target.value)} />
-                <input required type="number" placeholder="Peças/Tam" className="w-28 px-3 py-1 rounded border text-sm" value={item.piecesPerSize || ''} onChange={e => updateItem(idx, 'piecesPerSize', parseInt(e.target.value))} />
-                <button type="button" onClick={() => handleRemoveItem(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={18} /></button>
+            
+            {isSearching && filteredReferences.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                {filteredReferences.map(ref => (
+                  <button 
+                    key={ref.id} 
+                    type="button" 
+                    className="w-full px-4 py-3 text-left hover:bg-slate-50 border-b last:border-0 border-slate-100 transition-colors flex justify-between items-center"
+                    onClick={() => handleSelectProduct(ref)}
+                  >
+                    <div>
+                      <span className="font-bold text-indigo-700">{ref.code}</span>
+                      <span className="text-xs text-slate-400 ml-2">{ref.description}</span>
+                    </div>
+                    <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-full text-slate-500">{ref.defaultFabric}</span>
+                  </button>
+                ))}
               </div>
-            ))}
+            )}
           </div>
+
+          <div className="grid grid-cols-1 gap-4">
+            <div><label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Tecido</label>
+              <input 
+                readOnly 
+                className="w-full px-4 py-2 rounded-lg border bg-slate-50 text-slate-600 outline-none cursor-not-allowed" 
+                value={fabric} 
+                placeholder="Selecione uma referência..."
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-bold text-slate-700 uppercase flex items-center gap-2">
+                Cores e Estimativa 
+                {selectedProduct && <span className="text-[10px] text-indigo-500 normal-case font-medium">(Rendimento: {selectedProduct.estimatedPiecesPerRoll} pçs/rolo)</span>}
+              </h3>
+              <button type="button" onClick={handleAddItem} className="text-xs font-bold text-indigo-600 flex items-center gap-1"><Plus size={14}/> Nova Cor</button>
+            </div>
+            
+            <div className="space-y-2">
+              {items.length === 0 && (
+                <div className="text-center p-8 border-2 border-dashed border-slate-100 rounded-2xl text-slate-400">
+                  <Info className="mx-auto mb-2 opacity-20" size={24}/>
+                  <p className="text-xs italic">Selecione uma referência para listar as cores.</p>
+                </div>
+              )}
+              {items.map((item, idx) => (
+                <div key={idx} className="flex flex-wrap md:flex-nowrap gap-3 p-4 bg-slate-50/50 rounded-2xl border border-slate-100 items-end">
+                  <div className="flex-1 min-w-[120px]">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Cor</label>
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full border border-white shadow-sm" style={{backgroundColor: item.colorHex || '#ccc'}}></div>
+                      <input required placeholder="Cor" className="w-full px-3 py-1.5 rounded-lg border bg-white text-sm focus:ring-2 focus:ring-indigo-500" value={item.color} onChange={e => updateItem(idx, 'color', e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="w-24">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Rolos</label>
+                    <input required type="number" step="0.1" className="w-full px-3 py-1.5 rounded-lg border bg-white text-sm font-bold text-indigo-700" value={item.rollsUsed || ''} onChange={e => updateItem(idx, 'rollsUsed', e.target.value)} />
+                  </div>
+                  <div className="w-28">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Est. Total</label>
+                    <input required type="number" className="w-full px-3 py-1.5 rounded-lg border bg-indigo-50 border-indigo-100 text-sm font-black text-indigo-900" value={item.estimatedPieces || ''} onChange={e => updateItem(idx, 'estimatedPieces', parseInt(e.target.value))} />
+                  </div>
+                  <div className="w-28 hidden sm:block">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Pçs/Tamanho</label>
+                    <input required type="number" className="w-full px-3 py-1.5 rounded-lg border bg-white text-sm" value={item.piecesPerSize || ''} onChange={e => updateItem(idx, 'piecesPerSize', parseInt(e.target.value))} />
+                  </div>
+                  <button type="button" onClick={() => handleRemoveItem(idx)} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div className="bg-slate-50 p-4 rounded-2xl">
+             <label className="block text-xs font-bold text-slate-500 mb-2 uppercase">Observações do Pedido</label>
+             <textarea 
+               className="w-full p-4 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm" 
+               rows={3}
+               value={notes}
+               onChange={e => setNotes(e.target.value)}
+               placeholder="Instruções especiais de corte ou separação..."
+             />
+          </div>
+
           <div className="flex justify-end gap-3 pt-6 border-t"><button type="button" onClick={onClose} className="px-6 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-medium">Cancelar</button><button type="submit" className="px-6 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-2 shadow-lg"><Save size={18} /> Salvar Ordem</button></div>
         </form>
       </div>
