@@ -96,15 +96,6 @@ export default function App() {
   const [loadingAi, setLoadingAi] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const [reportFilters, setReportFilters] = useState({
-      startDate: '',
-      endDate: '',
-      seamstressId: '',
-      status: '',
-      reference: '',
-      fabric: ''
-  });
-
   const [fabricFilters, setFabricFilters] = useState({
     name: '',
     color: '',
@@ -141,11 +132,6 @@ export default function App() {
     if (ids.length === 0) return '1';
     return (Math.max(...ids) + 1).toString();
   }, [orders]);
-
-  const uniqueFabrics = useMemo(() => {
-    const fabricsList = references.map(r => r.defaultFabric).filter(f => f && f.trim() !== '');
-    return Array.from(new Set(fabricsList)).sort();
-  }, [references]);
 
   const dashboardMetrics = useMemo(() => {
     const now = new Date();
@@ -295,11 +281,6 @@ export default function App() {
     }
   };
 
-  const handleEditOrder = (order: ProductionOrder) => {
-      setOrderToEdit(order);
-      setIsOrderModalOpen(true);
-  };
-
   const handleDeleteOrder = async (id: string) => {
       if (window.confirm("Tem certeza que deseja excluir esta ordem?")) {
           try {
@@ -367,14 +348,12 @@ export default function App() {
     try {
         const timestamp = new Date().toISOString();
         if ('id' in fabric) {
-            // Chamada para atualizar tecido existente
             const updated = await apiFetch(`fabrics/${fabric.id}`, {
                 method: 'PATCH',
                 body: JSON.stringify({ ...fabric, updatedAt: timestamp })
             });
             setFabrics(prev => prev.map(f => f.id === fabric.id ? updated : f));
         } else {
-            // Chamada para criar novo tecido
             const saved = await apiFetch('fabrics', {
                 method: 'POST',
                 body: JSON.stringify({ ...fabric, createdAt: timestamp, updatedAt: timestamp })
@@ -411,15 +390,21 @@ export default function App() {
   const initiateMoveToCutting = async (order: ProductionOrder) => {
     const updatedAt = new Date().toISOString();
     try {
+        const updatedFabricList = [...fabrics];
+        
         for (const item of (Array.isArray(order.items) ? order.items : [])) {
-             const fabricRec = fabrics.find(f => f.name.toLowerCase() === order.fabric.toLowerCase() && f.color.toLowerCase() === item.color.toLowerCase());
-             if (fabricRec) {
+             const fabricRecIdx = updatedFabricList.findIndex(f => f.name.toLowerCase() === order.fabric.toLowerCase() && f.color.toLowerCase() === item.color.toLowerCase());
+             if (fabricRecIdx > -1) {
+                 const fabricRec = updatedFabricList[fabricRecIdx];
                  const used = Number(item.rollsUsed) || 0;
                  const newStock = Math.max(0, fabricRec.stockRolls - used);
+                 
                  await apiFetch(`fabrics/${fabricRec.id}`, {
                      method: 'PATCH',
                      body: JSON.stringify({ stockRolls: newStock, updatedAt })
                  });
+                 
+                 updatedFabricList[fabricRecIdx] = { ...fabricRec, stockRolls: newStock, updatedAt };
              }
         }
         
@@ -428,10 +413,12 @@ export default function App() {
             body: JSON.stringify({ status: OrderStatus.CUTTING, updatedAt })
         });
 
+        setFabrics(updatedFabricList);
         setOrders(orders.map(o => o.id === order.id ? updatedOrder : o));
         setProductionStage(OrderStatus.CUTTING);
     } catch (error) {
         console.error("Error moving to cutting:", error);
+        alert("Erro ao atualizar estoque de tecido. Verifique se o tecido e cor estão cadastrados corretamente.");
     }
   };
   
@@ -788,11 +775,20 @@ export default function App() {
                               <td className="p-4 text-center"><span className="font-bold text-slate-700 text-lg">{totalPieces}</span></td>
                               <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
                                 <div className="flex justify-end gap-2 items-center">
-                                    {order.status === OrderStatus.PLANNED && (<button onClick={() => initiateMoveToCutting(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md flex items-center gap-1"><Scissors size={14}/> Iniciar</button>)}
-                                    {order.status === OrderStatus.CUTTING && itemsInCutting === 0 && cuttingList.length === 0 && (<button onClick={() => initiateConfirmCut(order)} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ClipboardList size={14} /> Confirmar</button>)}
-                                    {((order.status === OrderStatus.CUTTING && itemsInCutting > 0) || order.status === OrderStatus.SEWING) && itemsInCutting > 0 && (<button onClick={() => initiateDistribute(order)} className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ArrowRightLeft size={14} /> Distribuir</button>)}
-                                    <div className="h-6 w-px bg-slate-200 mx-1"></div>
-                                    <button onClick={() => handleDeleteOrder(order.id)} className="text-slate-400 hover:text-red-500 p-1.5"><Trash2 size={16} /></button>
+                                    {order.status === OrderStatus.PLANNED && (
+                                      <>
+                                        <button onClick={() => { setOrderToEdit(order); setIsOrderModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-1.5" title="Editar Pedido"><Edit2 size={16} /></button>
+                                        <button onClick={() => initiateMoveToCutting(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-md flex items-center gap-1"><Scissors size={14}/> Iniciar</button>
+                                        <div className="h-6 w-px bg-slate-200 mx-1"></div>
+                                        <button onClick={() => handleDeleteOrder(order.id)} className="text-slate-400 hover:text-red-500 p-1.5" title="Excluir Pedido"><Trash2 size={16} /></button>
+                                      </>
+                                    )}
+                                    {order.status === OrderStatus.CUTTING && itemsInCutting === 0 && cuttingList.length === 0 && (
+                                      <button onClick={() => initiateConfirmCut(order)} className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ClipboardList size={14} /> Confirmar</button>
+                                    )}
+                                    {((order.status === OrderStatus.CUTTING && itemsInCutting > 0) || order.status === OrderStatus.SEWING) && itemsInCutting > 0 && (
+                                      <button onClick={() => initiateDistribute(order)} className="bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 shadow-md"><ArrowRightLeft size={14} /> Distribuir</button>
+                                    )}
                                 </div>
                               </td>
                             </tr>
